@@ -1,1 +1,16 @@
 @import "tailwindcss";
+
+html{
+  background-color: #0a0a0aba;
+}
+
+
+
+@theme{
+  --color-flikd-black: #0A0A0A;
+  --color-flikd-grey: #0B375B;
+  --color-flikd-gold: #D4AF37;
+  --color-flikd-white: #FFFFFF; 
+  --font-inter: "Inter", sans-serif;
+  --font-bebas: "Bebas Neue", sans-serif;
+}

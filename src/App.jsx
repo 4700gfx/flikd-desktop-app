@@ -1,11 +1,12 @@
 import './App.css'
+import LoginPage from './pages/LogInPage'
 
 function App() {
 
 
   return (
-    <div className='text-4xl'>
-      Flikd Application 
+    <div> 
+      <LoginPage></LoginPage>
     </div>
   )
 }
