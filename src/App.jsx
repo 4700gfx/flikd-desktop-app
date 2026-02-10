@@ -4,8 +4,8 @@ function App() {
 
 
   return (
-    <div className='text-8xl'>
-      Hello World 
+    <div className='text-4xl'>
+      Flikd Application 
     </div>
   )
 }
