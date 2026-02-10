@@ -36,10 +36,13 @@ const LogInPage = () => {
 
           <div className='relative z-10'>
             <h1 className='font-bebas text-7xl leading-tight text-flikd-black mb-6'>
-              Flik'd
+              🎥 Flik'd
             </h1>
-            <p className='font-inter text-xl text-flikd-black/80 max-w-md'>
-              Your New Favorite Review Application
+
+            <h3 className='font-inter font-bold text-2xl'>Welcome Back</h3>
+            <p className='font-inter text-md text-flikd-black/80 max-w-md w-10/12'>
+              Sign in to track what you’re watching, share reviews, and discover what’s worth the hype. 
+              Share list with your friends, get points and fall in love with the world of cinema. 
             </p>
           </div>
 
@@ -99,7 +102,7 @@ const LogInPage = () => {
                     value={formData.name}
                     onChange={handleInputChange}
                     className='w-full px-4 py-3 border-2 border-flikd-black/10 rounded-lg font-inter focus:outline-none focus:border-flikd-gold transition-colors'
-                    placeholder='John Doe'
+                    placeholder='Your Name'
                     required={isSignUp}
                   />
                 </div>
