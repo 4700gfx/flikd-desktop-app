@@ -1,7 +1,9 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import supabase from '../config/SupabaseClient'
 
 const LogInPage = () => {
+  const navigate = useNavigate()
   const [isSignUp, setIsSignUp] = useState(true)
   const [formData, setFormData] = useState({
     email: '',
@@ -14,6 +16,32 @@ const LogInPage = () => {
   const [successMessage, setSuccessMessage] = useState(null)
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
+
+  // Check if user is already logged in when component mounts
+  useEffect(() => {
+    const checkUser = async () => {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session) {
+        // User is already logged in, redirect to home
+        navigate('/home')
+      }
+    }
+    
+    checkUser()
+
+    // Listen for auth state changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_IN' && session) {
+        // Redirect to home after successful sign in
+        navigate('/home')
+      }
+    })
+
+    // Cleanup subscription on unmount
+    return () => {
+      subscription.unsubscribe()
+    }
+  }, [navigate])
 
   const handleInputChange = (e) => {
     setFormData({
@@ -54,7 +82,18 @@ const LogInPage = () => {
 
       if (error) throw error
 
-      setSuccessMessage('Account created! Please check your email to verify your account.')
+      // Check if email confirmation is required
+      if (data?.user?.identities?.length === 0) {
+        setError('This email is already registered. Please sign in instead.')
+      } else if (data?.user && !data?.session) {
+        // Email confirmation required
+        setSuccessMessage('Account created! Please check your email to verify your account.')
+      } else {
+        // Auto sign-in enabled (no email confirmation required)
+        setSuccessMessage('Account created successfully! Redirecting...')
+        // The useEffect listener will handle the redirect
+      }
+
       console.log('Sign up successful:', data)
 
       setFormData({
@@ -63,11 +102,6 @@ const LogInPage = () => {
         confirmPassword: '',
         name: ''
       })
-
-      setTimeout(() => {
-        setIsSignUp(false)
-        setSuccessMessage(null)
-      }, 3000)
 
     } catch (error) {
       setError(error.message)
@@ -93,6 +127,8 @@ const LogInPage = () => {
 
       setSuccessMessage('Login successful! Redirecting...')
       console.log('Sign in successful:', data)
+      
+      // The useEffect listener will automatically redirect to /home
 
     } catch (error) {
       setError(error.message)
@@ -110,7 +146,7 @@ const LogInPage = () => {
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: window.location.origin
+          redirectTo: `${window.location.origin}/home` // Redirect to home after Google auth
         }
       })
 
@@ -350,31 +386,23 @@ const LogInPage = () => {
                 </div>
               )}
 
-              {/*
-                Extract the button text to a variable to avoid nested ternary in JSX.
-              */}
-              {(() => {
-                var buttonText = isSignUp ? 'Create Account' : 'Sign In';
-                return (
-                  <button
-                    type='submit'
-                    disabled={loading}
-                    className='w-full bg-gradient-to-r from-flikd-gold to-yellow-500 text-flikd-black font-inter font-bold py-4 rounded-xl hover:shadow-xl hover:shadow-flikd-gold/30 transition-all duration-300 transform hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none mt-6'
-                  >
-                    {loading ? (
-                      <span className='flex items-center justify-center gap-2'>
-                        <svg className='animate-spin h-5 w-5' fill='none' viewBox='0 0 24 24'>
-                          <circle className='opacity-25' cx='12' cy='12' r='10' stroke='currentColor' strokeWidth='4'></circle>
-                          <path className='opacity-75' fill='currentColor' d='M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z'></path>
-                        </svg>
-                        Processing...
-                      </span>
-                    ) : (
-                      buttonText
-                    )}
-                  </button>
-                );
-              })()}
+              <button
+                type='submit'
+                disabled={loading}
+                className='w-full bg-gradient-to-r from-flikd-gold to-yellow-500 text-flikd-black font-inter font-bold py-4 rounded-xl hover:shadow-xl hover:shadow-flikd-gold/30 transition-all duration-300 transform hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none mt-6'
+              >
+                {loading ? (
+                  <span className='flex items-center justify-center gap-2'>
+                    <svg className='animate-spin h-5 w-5' fill='none' viewBox='0 0 24 24'>
+                      <circle className='opacity-25' cx='12' cy='12' r='10' stroke='currentColor' strokeWidth='4'></circle>
+                      <path className='opacity-75' fill='currentColor' d='M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z'></path>
+                    </svg>
+                    Processing...
+                  </span>
+                ) : (
+                  isSignUp ? 'Create Account' : 'Sign In'
+                )}
+              </button>
             </form>
 
             {/* Divider */}
@@ -420,7 +448,7 @@ const LogInPage = () => {
         </div>
       </div>
 
-      {/* Add animations to your global CSS or Tailwind config */}
+      {/* Add animations */}
       <style jsx>{`
         @keyframes slideIn {
           from {
