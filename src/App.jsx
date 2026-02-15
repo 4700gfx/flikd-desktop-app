@@ -2,6 +2,7 @@ import React from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import LogInPage from './pages/LogInPage'
 import Home from './pages/Home'
+import './App.css'
 
 function App() {
   return (
