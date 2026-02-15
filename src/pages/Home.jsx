@@ -5,41 +5,50 @@ import Post from '../components/common/Post'
 import CurrentListTab from '../components/sections/CurrentListTab'
 import RecentActivity from '../components/sections/RecentActivity'
 import supabase from '../config/SupabaseClient'
+import { ensureUserProfile } from '../utils/ProfileHelper'
 
 /**
- * Home Page for Flik'd Application
- * 
- * Main feed layout with:
- * - Left sidebar: Navigation
- * - Center column: Create post + feed
- * - Right sidebar: Trends/suggestions (optional)
- * 
- * Colors: Gold (#D4AF37), Black (#0A0A0A), Grey (#0B375B), White (#FFFFFF)
+ * FLIK'D Home Page - FIXED VERSION
+ * Ensures profile exists before allowing posts
+ * Adds full list creation and management
  */
 
 const Home = () => {
   const [currentUser, setCurrentUser] = useState(null)
   const [posts, setPosts] = useState([])
+  const [userLists, setUserLists] = useState([])
+  const [recentActivities, setRecentActivities] = useState([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
 
-  // Fetch current user on mount
+  // Fetch and ensure user profile exists
   useEffect(() => {
     const fetchUser = async () => {
       try {
-        const { data: { user }, error } = await supabase.auth.getUser()
+        const { data: { user }, error: authError } = await supabase.auth.getUser()
         
-        if (error) throw error
+        if (authError) throw authError
         
         if (user) {
-          setCurrentUser({
-            id: user.id,
-            name: user.user_metadata?.full_name || user.email?.split('@')[0] || 'User',
-            email: user.email,
-            avatar: user.user_metadata?.avatar_url || null
-          })
+          // CRITICAL: Ensure profile exists before proceeding
+          const profile = await ensureUserProfile(user)
+          
+          if (profile) {
+            setCurrentUser({
+              id: user.id,
+              username: profile.username,
+              displayName: profile.display_name,
+              email: user.email,
+              avatar: profile.avatar_url,
+              bio: profile.bio,
+              totalPoints: profile.total_points || 0,
+              level: profile.level || 1
+            })
+          }
         }
       } catch (error) {
         console.error('Error fetching user:', error)
+        setError('Failed to load user data. Please refresh.')
       } finally {
         setLoading(false)
       }
@@ -51,223 +60,465 @@ const Home = () => {
   // Fetch posts
   useEffect(() => {
     const fetchPosts = async () => {
+      if (!currentUser) return
+      
       try {
         const { data, error } = await supabase
           .from('posts')
-          .select('*')
+          .select(`
+            *,
+            profiles:user_id (
+              id,
+              username,
+              display_name,
+              avatar_url,
+              level
+            )
+          `)
           .order('created_at', { ascending: false })
-          .limit(20)
+          .limit(50)
         
         if (error) throw error
-        setPosts(data || [])
+
+        const transformedPosts = (data || []).map(post => ({
+          id: post.id,
+          userId: post.user_id,
+          user: {
+            id: post.profiles?.id || post.user_id,
+            username: post.profiles?.username || 'unknown',
+            displayName: post.profiles?.display_name || 'User',
+            avatar: post.profiles?.avatar_url || null,
+            level: post.profiles?.level || 1
+          },
+          movie: {
+            id: post.tmdb_id,
+            title: post.title,
+            posterPath: post.poster_path,
+            mediaType: post.media_type || 'movie'
+          },
+          content: post.content,
+          rating: post.rating,
+          timestamp: post.created_at,
+          type: 'review'
+        }))
+        
+        setPosts(transformedPosts)
       } catch (error) {
         console.error('Error fetching posts:', error)
       }
     }
     
     fetchPosts()
-  }, [])
+  }, [currentUser])
 
-  // Handle new post creation
+  // Fetch user's lists
+  useEffect(() => {
+    const fetchUserLists = async () => {
+      if (!currentUser) return
+      
+      try {
+        const { data, error } = await supabase
+          .rpc('get_user_lists_with_counts', { target_user_id: currentUser.id })
+        
+        if (error) {
+          const { data: listsData, error: listsError } = await supabase
+            .from('lists')
+            .select(`
+              *,
+              list_items (
+                id,
+                is_completed
+              )
+            `)
+            .eq('user_id', currentUser.id)
+            .is('deleted_at', null)
+            .order('updated_at', { ascending: false })
+          
+          if (listsError) throw listsError
+          
+          const formattedLists = listsData.map(list => ({
+            id: list.id,
+            name: list.name,
+            description: list.description,
+            isPublic: list.is_public,
+            itemCount: list.list_items?.length || 0,
+            completedCount: list.list_items?.filter(item => item.is_completed).length || 0
+          }))
+          
+          setUserLists(formattedLists)
+        } else {
+          setUserLists(data || [])
+        }
+      } catch (error) {
+        console.error('Error fetching lists:', error)
+      }
+    }
+    
+    fetchUserLists()
+  }, [currentUser])
+
+  // Fetch activities
+  useEffect(() => {
+    const fetchActivities = async () => {
+      if (!currentUser) return
+      
+      try {
+        const { data, error } = await supabase
+          .from('activities')
+          .select(`
+            *,
+            profiles:user_id (
+              username,
+              display_name,
+              avatar_url
+            )
+          `)
+          .order('created_at', { ascending: false })
+          .limit(10)
+        
+        if (error) throw error
+
+        const formattedActivities = (data || []).map(activity => ({
+          id: activity.id,
+          type: activity.activity_type,
+          user: {
+            id: activity.user_id,
+            username: activity.profiles?.username || 'unknown',
+            displayName: activity.profiles?.display_name || 'User',
+            avatar: activity.profiles?.avatar_url || null
+          },
+          data: activity.activity_data,
+          timestamp: activity.created_at
+        }))
+        
+        setRecentActivities(formattedActivities)
+      } catch (error) {
+        console.error('Error fetching activities:', error)
+      }
+    }
+    
+    fetchActivities()
+  }, [currentUser])
+
+  // Handle post creation
   const handlePostCreate = async (postData) => {
     try {
-      // Upload images to Supabase Storage (if any)
-      let imageUrls = []
-      if (postData.images && postData.images.length > 0) {
-        imageUrls = await Promise.all(
-          postData.images.map(async (imageUrl, index) => {
-            const response = await fetch(imageUrl)
-            const blob = await response.blob()
-            const fileName = `${currentUser.id}/${Date.now()}_${index}.jpg`
-            
-            const { data, error } = await supabase.storage
-              .from('post-images')
-              .upload(fileName, blob)
-            
-            if (error) throw error
-            
-            return supabase.storage
-              .from('post-images')
-              .getPublicUrl(fileName).data.publicUrl
-          })
-        )
-      }
-
-      // Create post in database
       const { data, error } = await supabase
         .from('posts')
         .insert({
           user_id: currentUser.id,
-          content: postData.content,
-          type: postData.type,
-          movie_id: postData.movie?.id,
-          rating: postData.rating,
-          images: imageUrls,
-          created_at: postData.timestamp
+          tmdb_id: postData.movie.id,
+          media_type: postData.movie.mediaType || 'movie',
+          title: postData.movie.title,
+          poster_path: postData.movie.posterPath,
+          content: postData.content.trim(),
+          rating: postData.rating
         })
         .select()
         .single()
 
       if (error) throw error
 
-      // Add to local state
+      // Award points
+      await supabase.from('points_transactions').insert({
+        user_id: currentUser.id,
+        points: 10,
+        reason: 'Created a review',
+        reference_type: 'post',
+        reference_id: data.id
+      })
+
+      // Create activity
+      await supabase.from('activities').insert({
+        user_id: currentUser.id,
+        activity_type: 'review_posted',
+        activity_data: {
+          post_id: data.id,
+          movie_title: postData.movie.title,
+          rating: postData.rating
+        }
+      })
+
       const newPost = {
-        ...data,
-        user: currentUser,
+        id: data.id,
+        userId: currentUser.id,
+        user: {
+          id: currentUser.id,
+          username: currentUser.username,
+          displayName: currentUser.displayName,
+          avatar: currentUser.avatar,
+          level: currentUser.level
+        },
         movie: postData.movie,
-        likes: 0,
-        comments: [],
-        shares: 0,
-        isLiked: false
+        content: data.content,
+        rating: data.rating,
+        timestamp: data.created_at,
+        type: 'review'
       }
       
       setPosts([newPost, ...posts])
+      setCurrentUser(prev => ({ ...prev, totalPoints: prev.totalPoints + 10 }))
       
+      return { success: true }
     } catch (error) {
       console.error('Error creating post:', error)
-      alert('Failed to create post. Please try again.')
+      return { success: false, error: error.message }
     }
   }
 
-  // Movie search using TMDB API (replace with your API key)
-  const handleMovieSearch = async (query) => {
+  // Handle list creation
+  const handleListCreate = async (listData) => {
     try {
-      // Example using TMDB API - replace with your implementation
+      // Create list
+      const { data: list, error: listError } = await supabase
+        .from('lists')
+        .insert({
+          user_id: currentUser.id,
+          name: listData.name,
+          description: listData.description || null,
+          is_public: listData.isPublic,
+          is_collaborative: listData.isCollaborative
+        })
+        .select()
+        .single()
+
+      if (listError) throw listError
+
+      // Add movies to list
+      if (listData.movies && listData.movies.length > 0) {
+        const listItems = listData.movies.map((movie, index) => ({
+          list_id: list.id,
+          tmdb_id: movie.id,
+          media_type: movie.mediaType || 'movie',
+          title: movie.title,
+          poster_path: movie.posterPath,
+          position: index,
+          added_by: currentUser.id
+        }))
+
+        const { error: itemsError } = await supabase
+          .from('list_items')
+          .insert(listItems)
+
+        if (itemsError) throw itemsError
+      }
+
+      // Create activity
+      await supabase.from('activities').insert({
+        user_id: currentUser.id,
+        activity_type: 'list_created',
+        activity_data: {
+          list_id: list.id,
+          list_name: listData.name,
+          movie_count: listData.movies.length
+        }
+      })
+
+      // Refresh lists
+      const updatedLists = [...userLists, {
+        id: list.id,
+        name: list.name,
+        description: list.description,
+        isPublic: list.is_public,
+        itemCount: listData.movies.length,
+        completedCount: 0
+      }]
+      setUserLists(updatedLists)
+
+      return { success: true }
+    } catch (error) {
+      console.error('Error creating list:', error)
+      return { success: false, error: error.message }
+    }
+  }
+
+  // Handle quick add to list
+  const handleListItemAdd = async (data) => {
+    try {
+      const { error } = await supabase
+        .from('list_items')
+        .insert({
+          list_id: data.listId,
+          tmdb_id: data.movie.id,
+          media_type: data.movie.mediaType || 'movie',
+          title: data.movie.title,
+          poster_path: data.movie.posterPath,
+          added_by: currentUser.id
+        })
+
+      if (error) throw error
+
+      // Refresh lists
+      const { data: listsData } = await supabase
+        .rpc('get_user_lists_with_counts', { target_user_id: currentUser.id })
+      
+      if (listsData) setUserLists(listsData)
+
+      return { success: true }
+    } catch (error) {
+      console.error('Error adding to list:', error)
+      return { success: false, error: error.message }
+    }
+  }
+
+  // Movie search
+  const handleMovieSearch = async (query) => {
+    if (!query.trim()) return []
+    
+    try {
+      const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY || process.env.REACT_APP_TMDB_API_KEY
+      
+      if (!TMDB_API_KEY || TMDB_API_KEY === 'YOUR_API_KEY') {
+        console.warn('TMDB API key not configured')
+        return []
+      }
+      
       const response = await fetch(
-        `https://api.themoviedb.org/3/search/movie?api_key=YOUR_API_KEY&query=${encodeURIComponent(query)}`
+        `https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(query)}`
       )
+      
+      if (!response.ok) throw new Error('Movie search failed')
+      
       const data = await response.json()
       
-      return data.results?.slice(0, 5).map(movie => ({
-        id: movie.id,
-        title: movie.title,
-        year: movie.release_date?.split('-')[0],
-        genre: movie.genre_ids?.[0], // Map to genre names as needed
-        posterUrl: movie.poster_path 
-          ? `https://image.tmdb.org/t/p/w200${movie.poster_path}`
-          : null
-      })) || []
+      return (data.results || [])
+        .filter(item => item.media_type === 'movie' || item.media_type === 'tv')
+        .slice(0, 10)
+        .map(item => ({
+          id: item.id,
+          title: item.title || item.name,
+          year: item.release_date ? item.release_date.split('-')[0] : 
+                item.first_air_date ? item.first_air_date.split('-')[0] : 'N/A',
+          mediaType: item.media_type,
+          posterPath: item.poster_path
+        }))
     } catch (error) {
       console.error('Movie search error:', error)
       return []
     }
   }
 
-  // Handle post interactions
-  const handleLike = async (post) => {
-    // Implement like logic
-    console.log('Liked post:', post.id)
-  }
-
-  const handleComment = async (post, commentText) => {
-    // Implement comment logic
-    console.log('Comment on post:', post.id, commentText)
-  }
-
-  const handleShare = async (post) => {
-    // Implement share logic
-    console.log('Share post:', post.id)
-  }
-
-  const handleUserClick = (user) => {
-    // Navigate to user profile
-    console.log('View user:', user.id)
-  }
-
   if (loading) {
     return (
-      <div className='min-h-screen bg-flikd-black flex items-center justify-center'>
+      <div className='min-h-screen bg-[#0A0A0A] flex items-center justify-center'>
         <div className='text-center'>
-          <svg className='animate-spin h-12 w-12 text-flikd-gold mx-auto mb-4' fill='none' viewBox='0 0 24 24'>
-            <circle className='opacity-25' cx='12' cy='12' r='10' stroke='currentColor' strokeWidth='4'></circle>
-            <path className='opacity-75' fill='currentColor' d='M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z'></path>
+          <svg className='animate-spin h-16 w-16 text-[#D4AF37] mx-auto mb-4' fill='none' viewBox='0 0 24 24'>
+            <circle className='opacity-25' cx='12' cy='12' r='10' stroke='currentColor' strokeWidth='4' />
+            <path className='opacity-75' fill='currentColor' d='M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z' />
           </svg>
-          <p className='font-inter text-flikd-white/60'>Loading...</p>
+          <h2 className='font-bebas text-2xl text-[#D4AF37] tracking-wide mb-2'>LOADING FLIK'D</h2>
+        </div>
+      </div>
+    )
+  }
+
+  if (error && !currentUser) {
+    return (
+      <div className='min-h-screen bg-[#0A0A0A] flex items-center justify-center p-4'>
+        <div className='text-center max-w-md'>
+          <div className='w-20 h-20 bg-red-500/10 rounded-full flex items-center justify-center mx-auto mb-6'>
+            <svg className='w-10 h-10 text-red-500' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+              <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z' />
+            </svg>
+          </div>
+          <h2 className='font-bebas text-3xl text-white mb-3 tracking-wide'>ERROR</h2>
+          <p className='font-inter text-white/60 mb-6 text-sm'>{error}</p>
+          <button onClick={() => window.location.reload()} className='bg-[#D4AF37] text-[#0A0A0A] px-8 py-3 rounded-full font-inter font-bold text-sm hover:bg-[#E8C55B]'>
+            Retry
+          </button>
         </div>
       </div>
     )
   }
 
   return (
-    <div className='min-h-screen bg-flikd-black'>
-      {/* Navigation Sidebar */}
-      <Navbar />
+    <div className='min-h-screen bg-[#0A0A0A]'>
+      <Navbar currentUser={currentUser} />
       
-      {/* Main Content Area with Right Sidebar */}
-      <main className='ml-28 lg:ml-80'>
-        <div className='max-w-7xl mx-auto flex px-4'>
+      <main className='ml-20 lg:ml-72'>
+        <div className='max-w-7xl mx-auto flex gap-8 px-4'>
           
-          {/* Center Feed */}
-          <div className='flex-1 max-w'>
+          <div className='flex-1 max-w-2xl'>
             
-            {/* Page Header */}
-            <div className='sticky top-0 z-40 bg-flikd-black/80 backdrop-blur-xl border-b border-flikd-grey mb-0'>
-              <div className='px-4 py-3'>
-                <h1 className='font-bebas text-2xl text-flikd-white tracking-wide'>
-                  HOME
-                </h1>
+            <div className='sticky top-0 z-50 bg-[#0A0A0A]/98 backdrop-blur-xl border-b border-[#1A1A1A]'>
+              <div className='px-4 py-4 flex items-center justify-between'>
+                <h1 className='font-bebas text-3xl text-white tracking-[0.05em]'>HOME</h1>
+                
+                {currentUser && (
+                  <div className='flex items-center gap-3'>
+                    <div className='flex items-center gap-2 px-3 py-1.5 bg-[#1A1A1A] rounded-full border border-[#2D2D2D]'>
+                      <svg className='w-4 h-4 text-[#D4AF37]' fill='currentColor' viewBox='0 0 20 20'>
+                        <path d='M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z' />
+                      </svg>
+                      <span className='font-inter font-bold text-white text-sm'>{currentUser.totalPoints}</span>
+                    </div>
+                    <div className='px-3 py-1.5 bg-gradient-to-r from-[#D4AF37] to-[#E8C55B] rounded-full'>
+                      <span className='font-inter font-bold text-[#0A0A0A] text-sm'>Level {currentUser.level}</span>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 
-            {/* Create Post Section */}
-            <div className='border-b-8 border-flikd-black'>
+            <div className='border-b-8 border-[#0A0A0A]'>
               <CreatePost
                 currentUser={currentUser}
                 onPostCreate={handlePostCreate}
+                onListCreate={handleListCreate}
+                onListItemAdd={handleListItemAdd}
                 onMovieSearch={handleMovieSearch}
+                userLists={userLists}
               />
             </div>
 
-            {/* Posts Feed */}
-            <div>
+            <div className='pb-24'>
               {posts.length > 0 ? (
-                posts.map((post) => (
+                posts.map((post, index) => (
                   <Post
                     key={post.id}
                     post={post}
                     currentUserId={currentUser?.id}
-                    onLike={handleLike}
-                    onComment={handleComment}
-                    onShare={handleShare}
-                    onUserClick={handleUserClick}
-                    className='border-b border-flikd-grey'
+                    onUserClick={(user) => console.log('User:', user)}
+                    className='border-b border-[#1A1A1A]'
+                    style={{ animation: `fadeInUp 0.4s ease-out ${index * 0.05}s both` }}
                   />
                 ))
               ) : (
-                // Empty state
-                <div className='p-12 text-center'>
-                  <svg className='w-16 h-16 text-flikd-grey mx-auto mb-4' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
-                    <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z' />
-                  </svg>
-                  <h3 className='font-bebas text-xl text-flikd-white mb-2 tracking-wide'>
-                    NO POSTS YET
-                  </h3>
-                  <p className='font-inter text-flikd-white/60 text-sm'>
-                    Be the first to share your movie thoughts!
-                  </p>
+                <div className='p-16 text-center'>
+                  <div className='w-24 h-24 bg-[#1A1A1A] rounded-full flex items-center justify-center mx-auto mb-6'>
+                    <svg className='w-12 h-12 text-[#2D2D2D]' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+                      <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={1.5} d='M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z' />
+                    </svg>
+                  </div>
+                  <h3 className='font-bebas text-2xl text-white mb-3 tracking-wide'>NO REVIEWS YET</h3>
+                  <p className='font-inter text-white/60 text-sm max-w-sm mx-auto'>Be the first to share your movie thoughts!</p>
                 </div>
               )}
             </div>
           </div>
           
-          {/* Right Sidebar */}
-          <aside className='hidden xl:block w-80 sticky top-0 h-screen overflow-y-auto py-4 ml-20 space-y-4'>
-            {/* Current Watchlist */}
+          <aside className='hidden xl:block w-80 sticky top-0 h-screen overflow-y-auto py-4 space-y-6'>
             <CurrentListTab
-              movies={[]} // Pass actual watchlist data
-              onMovieClick={(movie) => console.log('Movie clicked:', movie)}
-              onViewAll={() => console.log('View all watchlist')}
+              lists={userLists}
+              onListClick={(list) => console.log('List:', list)}
+              onViewAll={() => console.log('View all')}
             />
             
-            {/* Recent Activity */}
             <RecentActivity
-              activities={[]} // Pass actual activity data
-              onActivityClick={(activity) => console.log('Activity clicked:', activity)}
+              activities={recentActivities}
+              onActivityClick={(activity) => console.log('Activity:', activity)}
             />
           </aside>
           
         </div>
       </main>
+
+      <style>{`
+        @keyframes fadeInUp {
+          from { opacity: 0; transform: translateY(20px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
     </div>
   )
 }

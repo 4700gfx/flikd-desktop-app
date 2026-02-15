@@ -1,210 +1,132 @@
-import React, { useState, useEffect } from 'react'
+import React from 'react'
 
 /**
- * CurrentListTab Component for Flik'd Application
+ * CurrentListTab Component for Flik'd
  * 
- * Displays user's current watchlist with movie cards
- * Colors: Gold (#D4AF37), Black (#0A0A0A), Grey (#0B375B), White (#FFFFFF)
- * Typography: Bebas Neue for headers, Inter for body
- * 
- * @param {array} movies - Array of movie objects in user's list
- * @param {function} onMovieClick - Callback when movie is clicked
- * @param {function} onViewAll - Callback to view full watchlist
- * @param {number} maxDisplay - Maximum number of movies to show (default: 5)
+ * Displays user's movie/TV lists in sidebar
+ * Synced with Flikd schema (lists table)
+ * Shows list name, item count, and completion progress
  */
 
 const CurrentListTab = ({ 
-  movies = [],
-  onMovieClick,
-  onViewAll,
-  maxDisplay = 5
+  lists = [],
+  onListClick,
+  onViewAll
 }) => {
-  const [hoveredMovie, setHoveredMovie] = useState(null)
   
-  // Default mock data if no movies provided
-  const defaultMovies = [
-    {
-      id: 1,
-      title: 'The Shawshank Redemption',
-      year: '1994',
-      posterUrl: 'https://image.tmdb.org/t/p/w200/q6y0Go1tsGEsmtFryDOJo3dEmqu.jpg',
-      progress: 100
-    },
-    {
-      id: 2,
-      title: 'The Dark Knight',
-      year: '2008',
-      posterUrl: 'https://image.tmdb.org/t/p/w200/qJ2tW6WMUDux911r6m7haRef0WH.jpg',
-      progress: 75
-    },
-    {
-      id: 3,
-      title: 'Inception',
-      year: '2010',
-      posterUrl: 'https://image.tmdb.org/t/p/w200/9gk7adHYeDvHkCSEqAvQNLV5Uge.jpg',
-      progress: 0
-    }
-  ]
-  
-  const displayMovies = movies.length > 0 ? movies : defaultMovies
-  const limitedMovies = displayMovies.slice(0, maxDisplay)
+  // Calculate completion percentage
+  const getCompletionPercentage = (list) => {
+    if (!list.item_count || list.item_count === 0) return 0
+    return Math.round((list.completed_count / list.item_count) * 100)
+  }
   
   return (
-    <div className='bg-flikd-black/50 backdrop-blur-sm border border-flikd-grey rounded-2xl overflow-hidden'>
+    <div className='bg-[#0A0A0A] border border-[#1A1A1A] rounded-2xl overflow-hidden'>
       
       {/* Header */}
-      <div className='p-4 border-b border-flikd-grey flex items-center justify-between'>
+      <div className='p-4 border-b border-[#1A1A1A] flex items-center justify-between'>
         <div className='flex items-center gap-2'>
-          <svg className='w-5 h-5 text-flikd-gold' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
-            <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z' />
+          <svg className='w-5 h-5 text-[#D4AF37]' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+            <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2' />
           </svg>
-          <h2 className='font-bebas text-xl tracking-wide text-flikd-white'>
-            WATCHLIST
+          <h2 className='font-bebas text-xl tracking-wide text-white'>
+            YOUR LISTS
           </h2>
         </div>
-        <span className='text-xs font-inter font-semibold text-flikd-white/40 bg-flikd-grey/30 px-2 py-1 rounded-full'>
-          {displayMovies.length}
-        </span>
       </div>
       
-      {/* Movies List */}
-      <div className='p-3 space-y-2'>
-        {limitedMovies.map((movie, index) => (
-          <button
-            key={movie.id}
-            onClick={() => onMovieClick && onMovieClick(movie)}
-            onMouseEnter={() => setHoveredMovie(movie.id)}
-            onMouseLeave={() => setHoveredMovie(null)}
-            className='w-full group'
-            style={{ 
-              animation: `slideInRight 0.3s ease-out ${index * 0.05}s both` 
-            }}
-          >
-            <div className='flex items-center gap-3 p-2 rounded-xl hover:bg-flikd-grey/30 transition-all duration-200'>
-              {/* Movie Poster */}
-              <div className='relative flex-shrink-0'>
-                <div className='w-12 h-16 rounded-lg overflow-hidden bg-flikd-grey shadow-lg group-hover:shadow-flikd-gold/20 transition-shadow'>
-                  {movie.posterUrl ? (
-                    <img 
-                      src={movie.posterUrl} 
-                      alt={movie.title}
-                      className='w-full h-full object-cover group-hover:scale-110 transition-transform duration-300'
-                    />
-                  ) : (
-                    <div className='w-full h-full flex items-center justify-center'>
-                      <svg className='w-6 h-6 text-flikd-white/20' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
-                        <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z' />
-                      </svg>
-                    </div>
+      {/* Lists */}
+      <div className='divide-y divide-[#1A1A1A]'>
+        {lists.length > 0 ? (
+          lists.map((list, index) => {
+            const completion = getCompletionPercentage(list)
+            
+            return (
+              <button
+                key={list.list_id || list.id}
+                onClick={() => onListClick && onListClick(list)}
+                className='w-full p-4 hover:bg-[#1A1A1A] transition-all duration-200 text-left group'
+                style={{ 
+                  animation: `fadeInUp 0.3s ease-out ${index * 0.05}s both` 
+                }}
+              >
+                <div className='flex items-start justify-between gap-3 mb-2'>
+                  <h3 className='font-inter font-bold text-white text-sm group-hover:text-[#D4AF37] transition-colors line-clamp-1 flex-1'>
+                    {list.name}
+                  </h3>
+                  {list.is_public && (
+                    <span className='px-2 py-0.5 bg-blue-500/10 text-blue-400 text-xs font-inter font-semibold rounded-full flex-shrink-0'>
+                      Public
+                    </span>
                   )}
                 </div>
                 
-                {/* Progress Ring */}
-                {movie.progress !== undefined && movie.progress > 0 && (
-                  <div className='absolute -bottom-1 -right-1 w-5 h-5'>
-                    <svg className='w-5 h-5 transform -rotate-90' viewBox='0 0 20 20'>
-                      <circle
-                        cx='10'
-                        cy='10'
-                        r='8'
-                        fill='none'
-                        stroke='rgba(10, 10, 10, 0.8)'
-                        strokeWidth='2'
-                      />
-                      <circle
-                        cx='10'
-                        cy='10'
-                        r='8'
-                        fill='none'
-                        stroke='#D4AF37'
-                        strokeWidth='2'
-                        strokeDasharray={`${2 * Math.PI * 8}`}
-                        strokeDashoffset={`${2 * Math.PI * 8 * (1 - movie.progress / 100)}`}
-                        className='transition-all duration-500'
-                      />
-                    </svg>
-                  </div>
+                {list.description && (
+                  <p className='text-xs text-white/50 font-inter mb-3 line-clamp-2'>
+                    {list.description}
+                  </p>
                 )}
-              </div>
-              
-              {/* Movie Info */}
-              <div className='flex-1 min-w-0 text-left'>
-                <h3 className='font-inter font-semibold text-sm text-flikd-white truncate group-hover:text-flikd-gold transition-colors'>
-                  {movie.title}
-                </h3>
-                <div className='flex items-center gap-2 mt-0.5'>
-                  <span className='text-xs text-flikd-white/50 font-inter'>
-                    {movie.year}
-                  </span>
-                  {movie.progress !== undefined && (
-                    <>
-                      <span className='text-flikd-white/30'>•</span>
-                      <span className='text-xs text-flikd-gold font-inter font-medium'>
-                        {movie.progress === 100 ? 'Watched' : movie.progress === 0 ? 'Not started' : `${movie.progress}%`}
-                      </span>
-                    </>
-                  )}
+                
+                {/* Progress Bar */}
+                <div className='space-y-2'>
+                  <div className='flex items-center justify-between text-xs font-inter'>
+                    <span className='text-white/60'>
+                      {list.completed_count || 0} / {list.item_count || 0} completed
+                    </span>
+                    <span className='text-[#D4AF37] font-semibold'>
+                      {completion}%
+                    </span>
+                  </div>
+                  <div className='w-full h-2 bg-[#1A1A1A] rounded-full overflow-hidden'>
+                    <div 
+                      className='h-full bg-gradient-to-r from-[#D4AF37] to-[#E8C55B] rounded-full transition-all duration-300'
+                      style={{ width: `${completion}%` }}
+                    />
+                  </div>
                 </div>
-              </div>
-              
-              {/* Hover Arrow */}
-              <svg 
-                className={`w-4 h-4 text-flikd-gold transition-all duration-200 ${
-                  hoveredMovie === movie.id ? 'translate-x-0 opacity-100' : '-translate-x-2 opacity-0'
-                }`} 
-                fill='none' 
-                stroke='currentColor' 
-                viewBox='0 0 24 24'
-              >
-                <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M9 5l7 7-7 7' />
+              </button>
+            )
+          })
+        ) : (
+          // Empty State
+          <div className='p-8 text-center'>
+            <div className='w-16 h-16 bg-[#1A1A1A] rounded-full flex items-center justify-center mx-auto mb-3'>
+              <svg className='w-8 h-8 text-[#2D2D2D]' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+                <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2' />
               </svg>
             </div>
-          </button>
-        ))}
+            <p className='font-inter text-sm text-white/50 mb-1'>
+              No lists yet
+            </p>
+            <p className='font-inter text-xs text-white/30'>
+              Create your first watchlist!
+            </p>
+          </div>
+        )}
       </div>
       
       {/* View All Button */}
-      {displayMovies.length > maxDisplay && (
-        <div className='p-3 pt-0'>
+      {lists.length > 0 && onViewAll && (
+        <div className='p-4 border-t border-[#1A1A1A]'>
           <button
             onClick={onViewAll}
-            className='w-full py-2.5 bg-flikd-grey/20 hover:bg-flikd-grey/40 border border-flikd-grey/50 hover:border-flikd-gold/50 rounded-xl text-flikd-white/80 hover:text-flikd-gold font-inter font-semibold text-sm transition-all duration-200 flex items-center justify-center gap-2'
+            className='w-full py-2 text-center font-inter font-semibold text-sm text-[#D4AF37] hover:text-[#E8C55B] transition-colors'
           >
-            View All {displayMovies.length} Movies
-            <svg className='w-4 h-4' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
-              <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M17 8l4 4m0 0l-4 4m4-4H3' />
-            </svg>
+            View All Lists →
           </button>
-        </div>
-      )}
-      
-      {/* Empty State */}
-      {displayMovies.length === 0 && (
-        <div className='p-8 text-center'>
-          <div className='w-16 h-16 bg-flikd-grey/20 rounded-full flex items-center justify-center mx-auto mb-3'>
-            <svg className='w-8 h-8 text-flikd-white/20' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
-              <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z' />
-            </svg>
-          </div>
-          <p className='font-inter text-sm text-flikd-white/50 mb-1'>
-            Your watchlist is empty
-          </p>
-          <p className='font-inter text-xs text-flikd-white/30'>
-            Add movies to start tracking
-          </p>
         </div>
       )}
       
       {/* Animations */}
       <style jsx>{`
-        @keyframes slideInRight {
+        @keyframes fadeInUp {
           from {
             opacity: 0;
-            transform: translateX(10px);
+            transform: translateY(10px);
           }
           to {
             opacity: 1;
-            transform: translateX(0);
+            transform: translateY(0);
           }
         }
       `}</style>
