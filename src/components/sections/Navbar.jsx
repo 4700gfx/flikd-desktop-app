@@ -234,7 +234,7 @@ const Navbar = () => {
         {/* Navigation Items */}
         <nav className='relative flex-1 py-6 px-3 overflow-y-auto overflow-x-hidden scrollbar-hide'>
           <ul className='space-y-1.5'>
-            {navItems.map((item, index) => {
+            {navItems.map((item) => {
               const isActive = getActiveItem() === item.id
               
               return (

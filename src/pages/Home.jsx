@@ -366,7 +366,7 @@ const Home = () => {
     if (!query.trim()) return []
     
     try {
-      const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY || process.env.REACT_APP_TMDB_API_KEY
+      const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY
       
       if (!TMDB_API_KEY || TMDB_API_KEY === 'YOUR_API_KEY') {
         console.warn('TMDB API key not configured')

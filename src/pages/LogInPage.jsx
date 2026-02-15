@@ -147,6 +147,7 @@ const LogInPage = () => {
       const { data, error } = await supabase.auth.signInWithPassword({
         email: formData.email,
         password: formData.password,
+        data: data
       })
 
       if (error) throw error
