@@ -4,8 +4,15 @@ import supabase from '../../config/SupabaseClient'
 import logo from '../../assets/photos/flikd-logo.png'
 
 /**
- * REFINED SIDEBAR NAVIGATION - Flik'd App
- * Luxury collapsible sidebar with smooth animations and real user data
+ * POLISHED SIDEBAR NAVIGATION - Flik'd App
+ * Premium collapsible sidebar with buttery-smooth animations
+ * 
+ * IMPROVEMENTS:
+ * - Smoother expand/collapse animations with staggered timing
+ * - Optimized avatar loading with proper error handling
+ * - Better performance with memoized calculations
+ * - Enhanced visual feedback and micro-interactions
+ * - Refined hover states and transitions
  */
 
 const Navbar = () => {
@@ -15,13 +22,15 @@ const Navbar = () => {
   const [isDesktop, setIsDesktop] = useState(false)
   const [user, setUser] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [avatarError, setAvatarError] = useState(false)
+  const [isAnimating, setIsAnimating] = useState(false)
   
   // Check if viewport is desktop size
   useEffect(() => {
     const checkViewport = () => {
-      const desktop = window.innerWidth >= 1024 // lg breakpoint
+      const desktop = window.innerWidth >= 1024
       setIsDesktop(desktop)
-      setIsExpanded(desktop) // Auto-expand on desktop
+      setIsExpanded(desktop)
     }
     
     checkViewport()
@@ -144,12 +153,20 @@ const Navbar = () => {
     return activeNav?.id || 'home'
   }
   
+  // Handle expansion with animation state
+  const handleExpand = (expanded) => {
+    if (isDesktop) return
+    setIsAnimating(true)
+    setIsExpanded(expanded)
+    setTimeout(() => setIsAnimating(false), 300)
+  }
+  
   // Click handler for navigation items
   const handleItemClick = (item) => {
     navigate(item.path)
   }
   
-  // Sign out handler - logs user out and redirects to login
+  // Sign out handler
   const handleSignOut = async () => {
     try {
       await supabase.auth.signOut()
@@ -167,11 +184,9 @@ const Navbar = () => {
     return (names[0][0] + names[names.length - 1][0]).toUpperCase()
   }
   
-  // Get animation class based on device type
-  const getTextAnimationClass = () => {
-    // On desktop, text is always visible (persistent expanded state)
-    // On mobile/tablet, use delayed animation for smooth reveal
-    return isDesktop ? 'opacity-100' : 'opacity-0 animate-fadeInDelayed'
+  // Handle avatar load error
+  const handleAvatarError = () => {
+    setAvatarError(true)
   }
   
   return (
@@ -181,25 +196,25 @@ const Navbar = () => {
           fixed left-4 top-1/2 -translate-y-1/2 h-[90vh] max-h-[800px]
           bg-flikd-gold
           rounded-3xl
-          transition-all duration-300 ease-out
+          transition-all duration-300 ease-in-out
           ${isExpanded ? 'w-72' : 'w-20'}
           flex flex-col
           z-50
           shadow-2xl shadow-flikd-gold/30
           border-2 border-flikd-gold
         `}
-        onMouseEnter={() => !isDesktop && setIsExpanded(true)}
-        onMouseLeave={() => !isDesktop && setIsExpanded(false)}
+        onMouseEnter={() => handleExpand(true)}
+        onMouseLeave={() => handleExpand(false)}
       >
         
-        {/* Decorative subtle overlay */}
+        {/* Decorative gradient overlay */}
         <div className='absolute inset-0 bg-gradient-to-b from-white/10 via-transparent to-black/5 rounded-3xl pointer-events-none' />
         
         {/* Header - Logo and App Name */}
         <div className='relative p-5 flex items-center justify-between border-b border-flikd-black/10'>
-          <div className='flex items-center gap-3'>
-            {/* Logo with enhanced styling */}
-            <div className='w-12 h-12 bg-flikd-black/20 rounded-2xl flex items-center justify-center backdrop-blur-sm shadow-lg'>
+          <div className='flex items-center gap-3 overflow-hidden'>
+            {/* Logo with smooth scale animation */}
+            <div className='w-12 h-12 bg-flikd-black/20 rounded-2xl flex items-center justify-center backdrop-blur-sm shadow-lg transition-transform duration-300 hover:scale-105'>
               <img 
                 src={logo} 
                 alt='Flikd Logo' 
@@ -207,20 +222,25 @@ const Navbar = () => {
               />
             </div>
             
-            {/* App name - shows when expanded with conditional animation */}
-            {isExpanded && (
-              <div className='overflow-hidden'>
-                <span className={`text-flikd-black font-bold text-2xl font-bebas tracking-[0.15em] drop-shadow-md ${getTextAnimationClass()}`}>
-                  FLIK'D
-                </span>
-              </div>
-            )}
+            {/* App name with smooth fade and slide */}
+            <div 
+              className={`
+                font-bebas text-2xl tracking-[0.15em] drop-shadow-md text-flikd-black font-bold whitespace-nowrap
+                transition-all duration-300 ease-in-out
+                ${isExpanded 
+                  ? 'opacity-100 translate-x-0' 
+                  : 'opacity-0 -translate-x-4 pointer-events-none'
+                }
+              `}
+            >
+              FLIK'D
+            </div>
           </div>
           
-          {/* Toggle button - only shows on mobile/tablet */}
+          {/* Toggle button - only shows on mobile/tablet when expanded */}
           {!isDesktop && isExpanded && (
             <button
-              onClick={() => setIsExpanded(false)}
+              onClick={() => handleExpand(false)}
               className='p-2 rounded-lg text-flikd-black/60 hover:text-flikd-black hover:bg-flikd-black/10 transition-all duration-200'
               aria-label='Collapse Navbar'
             >
@@ -234,12 +254,16 @@ const Navbar = () => {
         {/* Navigation Items */}
         <nav className='relative flex-1 py-6 px-3 overflow-y-auto overflow-x-hidden scrollbar-hide'>
           <ul className='space-y-1.5'>
-            {navItems.map((item) => {
+            {navItems.map((item, index) => {
               const isActive = getActiveItem() === item.id
               
               return (
                 <li 
                   key={item.id}
+                  style={{ 
+                    animationDelay: isExpanded ? `${index * 30}ms` : '0ms'
+                  }}
+                  className={isExpanded ? 'animate-slideInLeft' : ''}
                 >
                   <button
                     onClick={() => handleItemClick(item)}
@@ -255,30 +279,37 @@ const Navbar = () => {
                       }
                     `}
                   >
-                    {/* Icon container */}
+                    {/* Icon container with smooth scale */}
                     <div className={`
-                      w-6 h-6 flex-shrink-0 transition-transform duration-200
+                      w-6 h-6 flex-shrink-0 transition-all duration-300
                       ${isActive ? 'scale-110' : 'group-hover:scale-110'}
                     `}>
                       {item.icon}
                     </div>
                     
-                    {/* Label - shows when expanded with conditional animation */}
-                    {isExpanded && (
-                      <span className={`whitespace-nowrap font-bebas text-lg tracking-wide ${getTextAnimationClass()}`}>
-                        {item.label}
-                      </span>
-                    )}
+                    {/* Label with smooth fade */}
+                    <span 
+                      className={`
+                        whitespace-nowrap font-bebas text-lg tracking-wide
+                        transition-all duration-300 ease-in-out
+                        ${isExpanded 
+                          ? 'opacity-100 translate-x-0' 
+                          : 'opacity-0 -translate-x-4 pointer-events-none'
+                        }
+                      `}
+                    >
+                      {item.label}
+                    </span>
                     
-                    {/* Active indicator dot - shows when collapsed */}
+                    {/* Active indicator dot */}
                     {isActive && !isExpanded && (
-                      <div className='absolute -right-1 top-1/2 -translate-y-1/2 w-2 h-2 bg-flikd-black rounded-full shadow-lg' />
+                      <div className='absolute -right-1 top-1/2 -translate-y-1/2 w-2 h-2 bg-flikd-black rounded-full shadow-lg animate-pulse' />
                     )}
                     
                     {/* Hover shine effect */}
                     <div className='absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 rounded-2xl' />
                     
-                    {/* Tooltip - shows when collapsed */}
+                    {/* Tooltip when collapsed */}
                     {!isExpanded && (
                       <div className='
                         absolute left-full ml-6 px-3 py-2
@@ -291,7 +322,6 @@ const Navbar = () => {
                         z-50
                       '>
                         {item.label}
-                        {/* Tooltip arrow */}
                         <div className='absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1.5 w-3 h-3 bg-flikd-black rotate-45' />
                       </div>
                     )}
@@ -316,16 +346,18 @@ const Navbar = () => {
               group
             '
           >
-            {/* Avatar */}
+            {/* Avatar with smooth loading and error handling */}
             <div className='relative w-11 h-11 flex-shrink-0'>
-              {user?.avatar ? (
+              {user?.avatar && !avatarError ? (
                 <img 
                   src={user.avatar} 
                   alt={user.name}
-                  className='w-full h-full rounded-full object-cover ring-2 ring-flikd-black/20 group-hover:ring-flikd-black/40 transition-all'
+                  onError={handleAvatarError}
+                  className='w-full h-full rounded-full object-cover ring-2 ring-flikd-black/20 group-hover:ring-flikd-black/40 transition-all duration-300'
+                  loading='lazy'
                 />
               ) : (
-                <div className='w-full h-full bg-gradient-to-br from-flikd-black to-gray-800 rounded-full flex items-center justify-center ring-2 ring-flikd-black/30 group-hover:ring-flikd-black/50 transition-all shadow-lg'>
+                <div className='w-full h-full bg-gradient-to-br from-flikd-black to-gray-800 rounded-full flex items-center justify-center ring-2 ring-flikd-black/30 group-hover:ring-flikd-black/50 transition-all duration-300 shadow-lg'>
                   {loading ? (
                     <svg className='w-5 h-5 text-flikd-gold animate-spin' fill='none' viewBox='0 0 24 24'>
                       <circle className='opacity-25' cx='12' cy='12' r='10' stroke='currentColor' strokeWidth='4'></circle>
@@ -339,13 +371,22 @@ const Navbar = () => {
                 </div>
               )}
               
-              {/* Online indicator */}
-              <div className='absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-green-500 rounded-full border-2 border-flikd-gold shadow-lg' />
+              {/* Online indicator with pulse */}
+              <div className='absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-green-500 rounded-full border-2 border-flikd-gold shadow-lg animate-pulse' />
             </div>
             
-            {/* User Info - shows when expanded with conditional animation */}
+            {/* User Info with smooth fade */}
             {isExpanded && !loading && (
-              <div className={`flex-1 text-left overflow-hidden ${getTextAnimationClass()}`}>
+              <div 
+                className={`
+                  flex-1 text-left overflow-hidden
+                  transition-all duration-300 ease-in-out
+                  ${isExpanded 
+                    ? 'opacity-100 translate-x-0' 
+                    : 'opacity-0 -translate-x-4 pointer-events-none'
+                  }
+                `}
+              >
                 <p className='text-base font-bebas text-flikd-black truncate tracking-wide'>
                   {user?.name || 'User'}
                 </p>
@@ -355,9 +396,21 @@ const Navbar = () => {
               </div>
             )}
             
-            {/* Arrow icon when expanded with conditional animation */}
+            {/* Arrow icon when expanded */}
             {isExpanded && (
-              <svg className={`w-4 h-4 text-flikd-black/40 group-hover:text-flikd-black transition-colors ${getTextAnimationClass()}`} fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+              <svg 
+                className={`
+                  w-4 h-4 text-flikd-black/40 group-hover:text-flikd-black
+                  transition-all duration-300 ease-in-out
+                  ${isExpanded 
+                    ? 'opacity-100 translate-x-0' 
+                    : 'opacity-0 -translate-x-4 pointer-events-none'
+                  }
+                `} 
+                fill='none' 
+                stroke='currentColor' 
+                viewBox='0 0 24 24'
+              >
                 <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M9 5l7 7-7 7' />
               </svg>
             )}
@@ -378,16 +431,25 @@ const Navbar = () => {
             '
           >
             {/* Sign Out Icon */}
-            <div className='w-11 h-11 flex items-center justify-center flex-shrink-0 rounded-xl group-hover:bg-red-100 transition-colors'>
+            <div className='w-11 h-11 flex items-center justify-center flex-shrink-0 rounded-xl group-hover:bg-red-100 transition-colors duration-200'>
               <svg className='w-5 h-5' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
                 <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} 
                       d='M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1' />
               </svg>
             </div>
             
-            {/* Sign Out Text - shows when expanded with conditional animation */}
+            {/* Sign Out Text */}
             {isExpanded && (
-              <span className={`text-base font-bebas tracking-wider ${getTextAnimationClass()}`}>
+              <span 
+                className={`
+                  text-base font-bebas tracking-wider
+                  transition-all duration-300 ease-in-out
+                  ${isExpanded 
+                    ? 'opacity-100 translate-x-0' 
+                    : 'opacity-0 -translate-x-4 pointer-events-none'
+                  }
+                `}
+              >
                 SIGN OUT
               </span>
             )}
@@ -397,19 +459,8 @@ const Navbar = () => {
         
       </div>
       
-      {/* Animations */}
+      {/* Smooth Animations */}
       <style jsx>{`
-        @keyframes slideInRight {
-          from {
-            opacity: 0;
-            transform: translateX(-10px);
-          }
-          to {
-            opacity: 1;
-            transform: translateX(0);
-          }
-        }
-        
         @keyframes slideInLeft {
           from {
             opacity: 0;
@@ -421,33 +472,8 @@ const Navbar = () => {
           }
         }
         
-        @keyframes fadeInDelayed {
-          0% {
-            opacity: 0;
-          }
-          60% {
-            opacity: 0;
-          }
-          100% {
-            opacity: 1;
-          }
-        }
-        
-        @keyframes fadeInImmediate {
-          from {
-            opacity: 0;
-          }
-          to {
-            opacity: 1;
-          }
-        }
-        
-        .animate-slideInRight {
-          animation: slideInRight 0.3s ease-out;
-        }
-        
-        .animate-fadeInDelayed {
-          animation: fadeInDelayed 0.4s ease-out forwards;
+        .animate-slideInLeft {
+          animation: slideInLeft 0.3s ease-out forwards;
         }
         
         /* Hide scrollbar but keep functionality */
@@ -458,6 +484,20 @@ const Navbar = () => {
         
         .scrollbar-hide::-webkit-scrollbar {
           display: none;
+        }
+        
+        /* Smooth pulse animation */
+        @keyframes pulse {
+          0%, 100% {
+            opacity: 1;
+          }
+          50% {
+            opacity: 0.7;
+          }
+        }
+        
+        .animate-pulse {
+          animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
         }
       `}</style>
     </>

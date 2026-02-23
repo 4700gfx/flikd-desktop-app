@@ -1,15 +1,42 @@
-import React, { useState, useRef } from 'react'
+import React, { useState, useRef, useCallback } from 'react'
 
 /**
- * Enhanced CreatePost Component for Flik'd
- * 
- * Multi-tab interface for:
- * - Writing Reviews
- * - Creating Lists
- * - Quick Add to Existing Lists
- * 
- * Brand Colors: Gold (#D4AF37), Black (#0A0A0A), Grey (#1A1A1A/#2D2D2D)
+ * FLIK'D CreatePost — Enhanced & Fixed
+ *
+ * Key fixes vs original:
+ * 1. List creation no longer passes circular/nested user object
+ * 2. Movie data is always serialized to a clean flat shape before submission
+ * 3. Debounced search uses useCallback to avoid stale closure
+ * 4. onMovieDetails (optional) auto-enriches TMDB data on selection
+ * 5. Better empty-state validation messages
+ * 6. Tab state resets cleanly on success
  */
+
+const TABS = [
+  { id: 'review', label: 'Write Review', emoji: '⭐' },
+  { id: 'list',   label: 'Create List',  emoji: '📋' },
+  { id: 'quick',  label: 'Quick Add',    emoji: '⚡' },
+]
+
+// Flatten a movie to only the fields we ever write to the DB
+const serializeMovie = (m) => ({
+  id: m.id,
+  title: m.title,
+  posterPath: m.posterPath ?? null,
+  backdropPath: m.backdropPath ?? null,
+  mediaType: m.mediaType ?? 'movie',
+  year: m.year ?? null,
+  overview: m.overview ?? null,
+  voteAverage: m.voteAverage ?? null,
+  releaseDate: m.releaseDate ?? null,
+  runtime: m.runtime ?? null,
+  genres: Array.isArray(m.genres) ? m.genres : [],
+  director: m.director ?? null,
+  cast: Array.isArray(m.cast) ? m.cast : [],
+  originalLanguage: m.originalLanguage ?? null,
+  status: m.status ?? null,
+  productionCompanies: Array.isArray(m.productionCompanies) ? m.productionCompanies : [],
+})
 
 const CreatePost = ({
   currentUser,
@@ -17,603 +44,593 @@ const CreatePost = ({
   onListCreate,
   onListItemAdd,
   onMovieSearch,
+  onMovieDetails, // optional: (movie) => Promise<enrichedMovie>
   userLists = [],
-  className = ''
 }) => {
-  
-  // Tab Management
-  const [activeTab, setActiveTab] = useState('review') // 'review', 'list', 'quick-add'
-  
-  // Review State
-  const [content, setContent] = useState('')
-  const [selectedMovie, setSelectedMovie] = useState(null)
+  // ── Tab ──
+  const [activeTab, setActiveTab] = useState('review')
+
+  // ── Review ──
+  const [reviewMovie, setReviewMovie] = useState(null)
+  const [reviewContent, setReviewContent] = useState('')
   const [rating, setRating] = useState(0)
-  const [hoveredRating, setHoveredRating] = useState(0)
-  
-  // List State
+  const [hovered, setHovered] = useState(0)
+
+  // ── List creation ──
   const [listName, setListName] = useState('')
-  const [listDescription, setListDescription] = useState('')
+  const [listDesc, setListDesc] = useState('')
   const [listMovies, setListMovies] = useState([])
-  const [isPublic, setIsPublic] = useState(false)
-  const [isCollaborative, setIsCollaborative] = useState(false)
-  
-  // Quick Add State
-  const [selectedList, setSelectedList] = useState(null)
-  const [quickAddMovie, setQuickAddMovie] = useState(null)
-  
-  // Search State
-  const [isSearching, setIsSearching] = useState(false)
-  const [searchQuery, setSearchQuery] = useState('')
+  const [listPublic, setListPublic] = useState(false)
+  const [listCollab, setListCollab] = useState(false)
+
+  // ── Quick add ──
+  const [quickList, setQuickList] = useState('')
+  const [quickMovie, setQuickMovie] = useState(null)
+
+  // ── Search ──
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchCtx, setSearchCtx] = useState('review')
+  const [searchQ, setSearchQ] = useState('')
   const [searchResults, setSearchResults] = useState([])
-  const [showMovieSearch, setShowMovieSearch] = useState(false)
-  const [searchContext, setSearchContext] = useState('review') // 'review', 'list', 'quick-add'
-  
-  // UI State
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [error, setError] = useState(null)
-  const [success, setSuccess] = useState(null)
-  
-  const searchTimeoutRef = useRef(null)
-  
-  // Handle movie search with debouncing
-  const handleMovieSearch = async (query) => {
-    setSearchQuery(query)
-    
-    if (!query.trim()) {
-      setSearchResults([])
-      setIsSearching(false)
-      return
-    }
-    
-    if (searchTimeoutRef.current) {
-      clearTimeout(searchTimeoutRef.current)
-    }
-    
-    setIsSearching(true)
-    
-    searchTimeoutRef.current = setTimeout(async () => {
-      try {
-        const results = await onMovieSearch(query)
-        setSearchResults(results || [])
-      } catch (error) {
-        console.error('Movie search error:', error)
-        setSearchResults([])
-      } finally {
-        setIsSearching(false)
-      }
-    }, 300)
-  }
-  
-  // Select movie based on context
-  const selectMovie = (movie) => {
-    if (searchContext === 'review') {
-      setSelectedMovie(movie)
-      setShowMovieSearch(false)
-    } else if (searchContext === 'list') {
-      // Add to list movies if not already added
-      if (!listMovies.find(m => m.id === movie.id && m.mediaType === movie.mediaType)) {
-        setListMovies([...listMovies, movie])
-      }
-      setShowMovieSearch(false)
-    } else if (searchContext === 'quick-add') {
-      setQuickAddMovie(movie)
-      setShowMovieSearch(false)
-    }
-    
-    setSearchResults([])
-    setSearchQuery('')
-  }
-  
-  // Open movie search
-  const openMovieSearch = (context) => {
-    setSearchContext(context)
-    setShowMovieSearch(true)
-  }
-  
-  // Clear selections
-  const clearMovie = () => {
-    setSelectedMovie(null)
-    setRating(0)
-  }
-  
-  const removeListMovie = (index) => {
-    setListMovies(listMovies.filter((_, i) => i !== index))
-  }
-  
-  // Handle Review Submission
-  const handleReviewSubmit = async () => {
-    if (!selectedMovie) {
-      setError('Please select a movie or TV show')
-      return
-    }
-    
-    if (!content.trim()) {
-      setError('Please write your review')
-      return
-    }
-    
-    if (rating === 0) {
-      setError('Please add a rating')
-      return
-    }
-    
-    setIsSubmitting(true)
-    setError(null)
-    
-    try {
-      const result = await onPostCreate({
-        content: content.trim(),
-        movie: selectedMovie,
-        rating: rating,
-        timestamp: new Date().toISOString()
-      })
-      
-      if (result.success) {
-        setContent('')
-        setSelectedMovie(null)
-        setRating(0)
-        setSuccess('Review posted successfully! +10 points')
-        setTimeout(() => setSuccess(null), 3000)
-      } else {
-        setError(result.error || 'Failed to create review')
-      }
-    } catch (error) {
-      console.error('Review creation error:', error)
-      setError('Something went wrong. Please try again.')
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-  
-  // Handle List Creation
-  const handleListSubmit = async () => {
-    if (!listName.trim()) {
-      setError('Please enter a list name')
-      return
-    }
-    
-    if (listMovies.length === 0) {
-      setError('Please add at least one movie to your list')
-      return
-    }
-    
-    setIsSubmitting(true)
-    setError(null)
-    
-    try {
-      const result = await onListCreate({
-        name: listName.trim(),
-        description: listDescription.trim(),
-        movies: listMovies,
-        isPublic,
-        isCollaborative
-      })
-      
-      if (result.success) {
-        setListName('')
-        setListDescription('')
-        setListMovies([])
-        setIsPublic(false)
-        setIsCollaborative(false)
-        setSuccess(`List "${listName}" created successfully!`)
-        setTimeout(() => setSuccess(null), 3000)
-      } else {
-        setError(result.error || 'Failed to create list')
-      }
-    } catch (error) {
-      console.error('List creation error:', error)
-      setError('Something went wrong. Please try again.')
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-  
-  // Handle Quick Add
-  const handleQuickAdd = async () => {
-    if (!selectedList) {
-      setError('Please select a list')
-      return
-    }
-    
-    if (!quickAddMovie) {
-      setError('Please select a movie to add')
-      return
-    }
-    
-    setIsSubmitting(true)
-    setError(null)
-    
-    try {
-      const result = await onListItemAdd({
-        listId: selectedList.id,
-        movie: quickAddMovie
-      })
-      
-      if (result.success) {
-        setQuickAddMovie(null)
-        setSelectedList(null)
-        setSuccess(`Added to "${selectedList.name}"!`)
-        setTimeout(() => setSuccess(null), 3000)
-      } else {
-        setError(result.error || 'Failed to add to list')
-      }
-    } catch (error) {
-      console.error('Quick add error:', error)
-      setError('Something went wrong. Please try again.')
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-  
-  const getUserInitials = () => {
-    if (!currentUser?.displayName) return 'U'
-    const names = currentUser.displayName.split(' ')
-    if (names.length === 1) return names[0][0].toUpperCase()
-    return (names[0][0] + names[names.length - 1][0]).toUpperCase()
+  const [searching, setSearching] = useState(false)
+  const [enriching, setEnriching] = useState(false)
+
+  // ── Submission ──
+  const [submitting, setSubmitting] = useState(false)
+  const [flash, setFlash] = useState(null) // { type: 'success'|'error', msg }
+
+  const debounceRef = useRef(null)
+
+  /* ── Helpers ── */
+  const showFlash = (type, msg) => {
+    setFlash({ type, msg })
+    setTimeout(() => setFlash(null), 4000)
   }
 
-  const getPosterUrl = (posterPath) => {
-    if (!posterPath) return null
-    return `https://image.tmdb.org/t/p/w185${posterPath}`
+  const initials = () => {
+    if (!currentUser?.displayName) return 'U'
+    const p = currentUser.displayName.split(' ')
+    return p.length === 1 ? p[0][0].toUpperCase() : (p[0][0] + p[p.length - 1][0]).toUpperCase()
   }
-  
-  return (
-    <div className={`bg-[#0A0A0A] border-b border-[#1A1A1A] ${className}`}>
-      
-      {/* Success Banner */}
-      {success && (
-        <div className='mx-6 mt-4 p-3 bg-green-500/10 border border-green-500/30 rounded-xl flex items-center gap-3'>
-          <svg className='w-5 h-5 text-green-500 flex-shrink-0' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
-            <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M5 13l4 4L19 7' />
+
+  const posterUrl = (path) => path ? `https://image.tmdb.org/t/p/w185${path}` : null
+
+  /* ── Search ── */
+  const doSearch = useCallback(async (q) => {
+    if (!q.trim()) { setSearchResults([]); setSearching(false); return }
+    setSearching(true)
+    try {
+      const res = await onMovieSearch(q)
+      setSearchResults(res || [])
+    } catch {
+      setSearchResults([])
+    } finally {
+      setSearching(false)
+    }
+  }, [onMovieSearch])
+
+  const handleSearchInput = (e) => {
+    const q = e.target.value
+    setSearchQ(q)
+    clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => doSearch(q), 300)
+  }
+
+  const openSearch = (ctx) => {
+    setSearchCtx(ctx)
+    setSearchQ('')
+    setSearchResults([])
+    setSearchOpen(true)
+  }
+
+  const closeSearch = () => {
+    setSearchOpen(false)
+    setSearchQ('')
+    setSearchResults([])
+  }
+
+  const pickMovie = async (raw) => {
+    closeSearch()
+
+    let movie = serializeMovie(raw)
+
+    // Optionally enrich with full TMDB details
+    if (onMovieDetails) {
+      setEnriching(true)
+      try {
+        const enriched = await onMovieDetails(movie)
+        movie = serializeMovie(enriched)
+      } catch { /* use basic data */ }
+      finally { setEnriching(false) }
+    }
+
+    if (searchCtx === 'review') setReviewMovie(movie)
+    else if (searchCtx === 'list') {
+      setListMovies(prev =>
+        prev.find(m => m.id === movie.id) ? prev : [...prev, movie]
+      )
+    } else if (searchCtx === 'quick') setQuickMovie(movie)
+  }
+
+  /* ── Submit: Review ── */
+  const submitReview = async () => {
+    if (!reviewMovie)        return showFlash('error', 'Please select a movie or TV show.')
+    if (!reviewContent.trim()) return showFlash('error', 'Please write your review.')
+    if (!rating)             return showFlash('error', 'Please add a rating (1–10).')
+
+    setSubmitting(true)
+    try {
+      const result = await onPostCreate({
+        content: reviewContent.trim(),
+        movie: reviewMovie,
+        rating,
+        timestamp: new Date().toISOString(),
+      })
+      if (result.success) {
+        setReviewMovie(null); setReviewContent(''); setRating(0)
+        showFlash('success', 'Review posted! +10 points 🎉')
+      } else {
+        showFlash('error', result.error || 'Failed to post review.')
+      }
+    } catch (e) {
+      showFlash('error', e.message || 'Something went wrong.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  /* ── Submit: List ── */
+  const submitList = async () => {
+    if (!listName.trim())    return showFlash('error', 'Please enter a list name.')
+    if (!listMovies.length)  return showFlash('error', 'Add at least one movie to the list.')
+
+    setSubmitting(true)
+    try {
+      // FIXED: clean serialized data only — no user object, no circular refs
+      const payload = {
+        name: listName.trim(),
+        description: listDesc.trim(),
+        isPublic: listPublic,
+        isCollaborative: listCollab,
+        movies: listMovies.map(serializeMovie), // already serialized but re-run for safety
+      }
+
+      const result = await onListCreate(payload)
+      if (result.success) {
+        setListName(''); setListDesc(''); setListMovies([])
+        setListPublic(false); setListCollab(false)
+        showFlash('success', `List "${listName.trim()}" created! 🎬`)
+      } else {
+        showFlash('error', result.error || 'Failed to create list.')
+      }
+    } catch (e) {
+      const msg = e.message?.includes('infinite recursion')
+        ? 'Database error — please try again.'
+        : e.message || 'Something went wrong.'
+      showFlash('error', msg)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  /* ── Submit: Quick Add ── */
+  const submitQuickAdd = async () => {
+    if (!quickList)  return showFlash('error', 'Please select a list.')
+    if (!quickMovie) return showFlash('error', 'Please select a movie.')
+
+    setSubmitting(true)
+    try {
+      // FIXED: clean data only
+      const result = await onListItemAdd({
+        listId: quickList,
+        movie: serializeMovie(quickMovie),
+      })
+      if (result.success) {
+        const listLabel = userLists.find(l => l.id === quickList)?.name || 'list'
+        setQuickMovie(null); setQuickList('')
+        showFlash('success', `Added to "${listLabel}"!`)
+      } else {
+        showFlash('error', result.error || 'Failed to add to list.')
+      }
+    } catch (e) {
+      showFlash('error', e.message || 'Something went wrong.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const switchTab = (id) => {
+    setActiveTab(id)
+    setFlash(null)
+  }
+
+  /* ── Spinner ── */
+  const Spinner = () => (
+    <svg className='w-4 h-4 animate-spin' fill='none' viewBox='0 0 24 24'>
+      <circle className='opacity-25' cx='12' cy='12' r='10' stroke='currentColor' strokeWidth='4' />
+      <path className='opacity-75' fill='currentColor' d='M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z' />
+    </svg>
+  )
+
+  /* ── Movie pill ── */
+  const MoviePill = ({ movie, onRemove }) => (
+    <div className='flex items-center gap-3 bg-[#181818] border border-[#262626] rounded-xl px-3 py-2 group'>
+      {posterUrl(movie.posterPath)
+        ? <img src={posterUrl(movie.posterPath)} alt={movie.title} className='w-9 h-12 object-cover rounded-lg shadow-md flex-shrink-0' />
+        : <div className='w-9 h-12 bg-[#2D2D2D] rounded-lg flex-shrink-0' />
+      }
+      <div className='flex-1 min-w-0'>
+        <p className='text-white text-sm font-semibold truncate'>{movie.title}</p>
+        <p className='text-white/40 text-xs'>{movie.year} · {movie.mediaType}</p>
+      </div>
+      {onRemove && (
+        <button onClick={onRemove} className='text-white/20 hover:text-red-500 transition-colors p-1 opacity-0 group-hover:opacity-100 flex-shrink-0'>
+          <svg className='w-4 h-4' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+            <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M6 18L18 6M6 6l12 12' />
           </svg>
-          <p className='text-sm text-green-400 font-inter flex-1'>{success}</p>
-        </div>
+        </button>
       )}
-      
-      {/* Error Banner */}
-      {error && (
-        <div className='mx-6 mt-4 p-3 bg-red-500/10 border border-red-500/30 rounded-xl flex items-center gap-3'>
-          <svg className='w-5 h-5 text-red-500 flex-shrink-0' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
-            <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z' />
-          </svg>
-          <p className='text-sm text-red-400 font-inter flex-1'>{error}</p>
-          <button onClick={() => setError(null)} className='text-red-400 hover:text-red-300'>
-            <svg className='w-4 h-4' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
-              <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M6 18L18 6M6 6l12 12' />
-            </svg>
+    </div>
+  )
+
+  /* ── Add-movie button ── */
+  const AddMovieBtn = ({ ctx, label = '+ Select Movie / Show' }) => (
+    <button
+      onClick={() => openSearch(ctx)}
+      className='w-full py-3.5 border-2 border-dashed border-[#262626] hover:border-[#D4AF37]/60 rounded-xl text-sm font-semibold text-white/40 hover:text-[#D4AF37] transition-all duration-200 group'
+    >
+      {enriching ? <span className='flex items-center justify-center gap-2'><Spinner /><span>Fetching details…</span></span> : label}
+    </button>
+  )
+
+  /* ── Submit button ── */
+  const SubmitBtn = ({ onClick, disabled, label, loadingLabel }) => (
+    <button
+      onClick={onClick}
+      disabled={disabled || submitting}
+      className='px-7 py-2.5 bg-[#D4AF37] text-[#0A0A0A] rounded-full font-bold text-sm hover:bg-[#E8C55B] disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 shadow-lg hover:shadow-xl hover:scale-[1.02] active:scale-95 flex items-center gap-2'
+    >
+      {submitting ? <><Spinner />{loadingLabel}</> : label}
+    </button>
+  )
+
+  return (
+    <div className='bg-[#0A0A0A]'>
+
+      {/* Flash banner */}
+      {flash && (
+        <div className={`mx-6 mt-4 px-4 py-3 rounded-xl flex items-center gap-3 border text-sm font-inter ${
+          flash.type === 'success'
+            ? 'bg-emerald-500/10 border-emerald-500/25 text-emerald-400'
+            : 'bg-red-500/10 border-red-500/25 text-red-400'
+        }`}>
+          {flash.type === 'success'
+            ? <svg className='w-4 h-4 shrink-0' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M5 13l4 4L19 7' /></svg>
+            : <svg className='w-4 h-4 shrink-0' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z' /></svg>
+          }
+          <span className='flex-1'>{flash.msg}</span>
+          <button onClick={() => setFlash(null)} className='hover:opacity-70 transition-opacity'>
+            <svg className='w-4 h-4' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M6 18L18 6M6 6l12 12' /></svg>
           </button>
         </div>
       )}
-      
-      {/* Main Content */}
+
       <div className='p-6 flex gap-4'>
-        {/* User Avatar */}
-        <div className='w-12 h-12 rounded-full bg-gradient-to-br from-[#D4AF37] to-[#B8961F] flex items-center justify-center font-inter font-bold text-[#0A0A0A] text-base ring-2 ring-[#1A1A1A] flex-shrink-0'>
-          {currentUser?.avatar ? (
-            <img src={currentUser.avatar} alt={currentUser.displayName} className='w-full h-full rounded-full object-cover' />
-          ) : (
-            getUserInitials()
-          )}
+        {/* Avatar */}
+        <div className='w-11 h-11 rounded-full flex-shrink-0 overflow-hidden ring-2 ring-[#1A1A1A] shadow-lg'>
+          {currentUser?.avatar
+            ? <img src={currentUser.avatar} alt={currentUser.displayName} className='w-full h-full object-cover' />
+            : <div className='w-full h-full bg-gradient-to-br from-[#D4AF37] to-[#B8961F] flex items-center justify-center font-bold text-[#0A0A0A] text-sm'>{initials()}</div>
+          }
         </div>
-        
-        {/* Content Column */}
+
         <div className='flex-1 min-w-0'>
-          
-          {/* Tab Navigation */}
-          <div className='flex gap-2 mb-6 border-b border-[#1A1A1A] pb-2'>
-            <button
-              onClick={() => setActiveTab('review')}
-              className={`px-4 py-2 rounded-t-lg font-inter font-semibold text-sm transition-all ${
-                activeTab === 'review'
-                  ? 'bg-[#1A1A1A] text-[#D4AF37] border-b-2 border-[#D4AF37]'
-                  : 'text-white/60 hover:text-white hover:bg-[#1A1A1A]/50'
-              }`}
-            >
-              ⭐ Write Review
-            </button>
-            <button
-              onClick={() => setActiveTab('list')}
-              className={`px-4 py-2 rounded-t-lg font-inter font-semibold text-sm transition-all ${
-                activeTab === 'list'
-                  ? 'bg-[#1A1A1A] text-[#D4AF37] border-b-2 border-[#D4AF37]'
-                  : 'text-white/60 hover:text-white hover:bg-[#1A1A1A]/50'
-              }`}
-            >
-              📋 Create List
-            </button>
-            <button
-              onClick={() => setActiveTab('quick-add')}
-              className={`px-4 py-2 rounded-t-lg font-inter font-semibold text-sm transition-all ${
-                activeTab === 'quick-add'
-                  ? 'bg-[#1A1A1A] text-[#D4AF37] border-b-2 border-[#D4AF37]'
-                  : 'text-white/60 hover:text-white hover:bg-[#1A1A1A]/50'
-              }`}
-            >
-              ⚡ Quick Add
-            </button>
+
+          {/* Tabs */}
+          <div className='flex gap-1 mb-5 border-b border-[#1A1A1A] pb-0'>
+            {TABS.map(t => (
+              <button
+                key={t.id}
+                onClick={() => switchTab(t.id)}
+                className={`px-4 py-2.5 text-sm font-semibold transition-all whitespace-nowrap rounded-t-lg border-b-2 -mb-px ${
+                  activeTab === t.id
+                    ? 'text-[#D4AF37] border-[#D4AF37] bg-[#D4AF37]/5'
+                    : 'text-white/40 border-transparent hover:text-white/70 hover:bg-[#1A1A1A]/50'
+                }`}
+              >
+                <span className='mr-1.5'>{t.emoji}</span>{t.label}
+              </button>
+            ))}
           </div>
-          
-          {/* TAB: WRITE REVIEW */}
+
+          {/* ── TAB: REVIEW ── */}
           {activeTab === 'review' && (
             <div className='space-y-4'>
-              <h3 className='font-bebas text-xl text-white tracking-wide'>
-                WRITE A REVIEW
-              </h3>
-              <p className='text-xs text-white/50 font-inter'>
-                Share your thoughts and earn 10 points!
-              </p>
-              
-              {/* Movie Selection */}
-              {selectedMovie ? (
-                <div className='bg-[#1A1A1A] rounded-xl p-3 flex items-center gap-3 border border-[#2D2D2D]'>
-                  {getPosterUrl(selectedMovie.posterPath) && (
-                    <img src={getPosterUrl(selectedMovie.posterPath)} alt={selectedMovie.title} className='w-12 h-16 object-cover rounded' />
-                  )}
-                  <div className='flex-1'>
-                    <h4 className='font-inter font-semibold text-white text-sm'>{selectedMovie.title}</h4>
-                    <p className='text-xs text-white/50'>{selectedMovie.year} • {selectedMovie.mediaType}</p>
-                  </div>
-                  <button onClick={clearMovie} className='p-2 text-white/40 hover:text-red-500'>
-                    <svg className='w-4 h-4' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
-                      <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M6 18L18 6M6 6l12 12' />
-                    </svg>
-                  </button>
-                </div>
-              ) : (
-                <button
-                  onClick={() => openMovieSearch('review')}
-                  className='w-full p-4 border-2 border-dashed border-[#2D2D2D] rounded-xl hover:border-[#D4AF37] transition-colors group'
-                >
-                  <div className='flex items-center justify-center gap-2 text-white/40 group-hover:text-[#D4AF37]'>
-                    <svg className='w-5 h-5' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
-                      <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M12 4v16m8-8H4' />
-                    </svg>
-                    <span className='font-inter font-semibold text-sm'>Select Movie or TV Show</span>
-                  </div>
-                </button>
-              )}
-              
+              <div>
+                <h3 className='font-bebas text-xl text-white tracking-wide mb-0.5'>WRITE A REVIEW</h3>
+                <p className='text-xs text-white/35'>Share your thoughts · earn 10 points</p>
+              </div>
+
+              {/* Movie selector */}
+              {reviewMovie
+                ? <MoviePill movie={reviewMovie} onRemove={() => { setReviewMovie(null); setRating(0) }} />
+                : <AddMovieBtn ctx='review' />
+              }
+
               {/* Rating */}
-              {selectedMovie && (
+              {reviewMovie && (
                 <div>
-                  <label className='block text-sm font-inter font-semibold text-white mb-2'>Your Rating</label>
-                  <div className='flex items-center gap-2'>
-                    {[1,2,3,4,5,6,7,8,9,10].map((value) => (
+                  <label className='block text-xs font-semibold text-white/50 mb-2 uppercase tracking-wider'>Your Rating</label>
+                  <div className='flex items-center gap-1.5 flex-wrap'>
+                    {[1,2,3,4,5,6,7,8,9,10].map(v => (
                       <button
-                        key={value}
-                        onClick={() => setRating(value)}
-                        onMouseEnter={() => setHoveredRating(value)}
-                        onMouseLeave={() => setHoveredRating(0)}
-                        className={`w-10 h-10 rounded-lg font-inter font-bold text-sm transition-all ${
-                          value <= (hoveredRating || rating)
-                            ? 'bg-[#D4AF37] text-[#0A0A0A] scale-110'
-                            : 'bg-[#1A1A1A] text-white/40'
+                        key={v}
+                        onClick={() => setRating(v)}
+                        onMouseEnter={() => setHovered(v)}
+                        onMouseLeave={() => setHovered(0)}
+                        className={`w-9 h-9 rounded-lg font-bold text-sm transition-all duration-150 ${
+                          v <= (hovered || rating)
+                            ? 'bg-[#D4AF37] text-[#0A0A0A] scale-110 shadow-lg shadow-[#D4AF37]/20'
+                            : 'bg-[#1A1A1A] text-white/40 hover:bg-[#222]'
                         }`}
-                      >
-                        {value}
-                      </button>
+                      >{v}</button>
                     ))}
+                    {rating > 0 && (
+                      <span className='ml-2 text-[#D4AF37] font-bold text-sm'>{rating}/10</span>
+                    )}
                   </div>
                 </div>
               )}
-              
-              {/* Review Text */}
-              {selectedMovie && (
-                <textarea
-                  value={content}
-                  onChange={(e) => setContent(e.target.value.slice(0, 1000))}
-                  placeholder="What did you think?"
-                  rows={4}
-                  className='w-full bg-[#1A1A1A] border border-[#2D2D2D] rounded-xl px-4 py-3 text-white placeholder:text-white/30 font-inter text-sm resize-none focus:outline-none focus:border-[#D4AF37]'
-                />
+
+              {/* Review text */}
+              {reviewMovie && (
+                <div className='relative'>
+                  <textarea
+                    value={reviewContent}
+                    onChange={(e) => setReviewContent(e.target.value.slice(0, 1000))}
+                    placeholder='What did you think?'
+                    rows={4}
+                    className='w-full bg-[#141414] border border-[#262626] focus:border-[#D4AF37]/60 rounded-xl px-4 py-3 text-white placeholder:text-white/25 text-[15px] resize-none focus:outline-none transition-colors leading-relaxed'
+                  />
+                  <span className='absolute bottom-3 right-4 text-[11px] text-white/25'>
+                    {reviewContent.length}/1000
+                  </span>
+                </div>
               )}
-              
-              {/* Submit */}
-              {selectedMovie && (
+
+              {reviewMovie && (
                 <div className='flex justify-end'>
-                  <button
-                    onClick={handleReviewSubmit}
-                    disabled={!selectedMovie || !content.trim() || rating === 0 || isSubmitting}
-                    className='px-6 py-2.5 bg-[#D4AF37] text-[#0A0A0A] rounded-full font-inter font-bold text-sm hover:bg-[#E8C55B] disabled:opacity-40 disabled:cursor-not-allowed'
-                  >
-                    {isSubmitting ? 'Posting...' : 'Post Review'}
-                  </button>
+                  <SubmitBtn
+                    onClick={submitReview}
+                    disabled={!reviewMovie || !reviewContent.trim() || !rating}
+                    label='Post Review'
+                    loadingLabel='Posting…'
+                  />
                 </div>
               )}
             </div>
           )}
-          
-          {/* TAB: CREATE LIST */}
+
+          {/* ── TAB: CREATE LIST ── */}
           {activeTab === 'list' && (
             <div className='space-y-4'>
-              <h3 className='font-bebas text-xl text-white tracking-wide'>CREATE A NEW LIST</h3>
-              
+              <h3 className='font-bebas text-xl text-white tracking-wide'>CREATE A LIST</h3>
+
               <input
                 value={listName}
                 onChange={(e) => setListName(e.target.value.slice(0, 100))}
-                placeholder="List name (e.g., 'Best Sci-Fi Movies')"
-                className='w-full bg-[#1A1A1A] border border-[#2D2D2D] rounded-xl px-4 py-3 text-white placeholder:text-white/30 font-inter text-sm focus:outline-none focus:border-[#D4AF37]'
+                placeholder="List name — e.g. 'Best Sci-Fi of the 90s'"
+                className='w-full bg-[#141414] border border-[#262626] focus:border-[#D4AF37]/60 rounded-xl px-4 py-3 text-white placeholder:text-white/25 text-sm focus:outline-none transition-colors'
               />
-              
+
               <textarea
-                value={listDescription}
-                onChange={(e) => setListDescription(e.target.value.slice(0, 500))}
-                placeholder="Description (optional)"
+                value={listDesc}
+                onChange={(e) => setListDesc(e.target.value.slice(0, 500))}
+                placeholder='Description (optional)'
                 rows={2}
-                className='w-full bg-[#1A1A1A] border border-[#2D2D2D] rounded-xl px-4 py-3 text-white placeholder:text-white/30 font-inter text-sm resize-none focus:outline-none focus:border-[#D4AF37]'
+                className='w-full bg-[#141414] border border-[#262626] focus:border-[#D4AF37]/60 rounded-xl px-4 py-3 text-white placeholder:text-white/25 text-sm resize-none focus:outline-none transition-colors'
               />
-              
-              {/* List Settings */}
-              <div className='flex gap-4'>
-                <label className='flex items-center gap-2 cursor-pointer'>
-                  <input type='checkbox' checked={isPublic} onChange={(e) => setIsPublic(e.target.checked)} className='w-4 h-4' />
-                  <span className='text-sm font-inter text-white'>Public</span>
-                </label>
-                <label className='flex items-center gap-2 cursor-pointer'>
-                  <input type='checkbox' checked={isCollaborative} onChange={(e) => setIsCollaborative(e.target.checked)} className='w-4 h-4' />
-                  <span className='text-sm font-inter text-white'>Collaborative</span>
-                </label>
-              </div>
-              
-              {/* Add Movies */}
-              <button
-                onClick={() => openMovieSearch('list')}
-                className='w-full p-3 border-2 border-dashed border-[#2D2D2D] rounded-xl hover:border-[#D4AF37] transition-colors'
-              >
-                <span className='text-sm font-inter font-semibold text-[#D4AF37]'>+ Add Movies</span>
-              </button>
-              
-              {/* List Movies */}
-              {listMovies.length > 0 && (
-                <div className='space-y-2'>
-                  {listMovies.map((movie, index) => (
-                    <div key={index} className='flex items-center gap-3 bg-[#1A1A1A] p-2 rounded-lg'>
-                      {getPosterUrl(movie.posterPath) && (
-                        <img src={getPosterUrl(movie.posterPath)} alt={movie.title} className='w-10 h-14 object-cover rounded' />
-                      )}
-                      <div className='flex-1'>
-                        <p className='font-inter font-medium text-white text-sm'>{movie.title}</p>
-                        <p className='text-xs text-white/50'>{movie.year}</p>
-                      </div>
-                      <button onClick={() => removeListMovie(index)} className='p-2 text-white/40 hover:text-red-500'>
-                        <svg className='w-4 h-4' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
-                          <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M6 18L18 6M6 6l12 12' />
-                        </svg>
-                      </button>
+
+              {/* Toggles */}
+              <div className='flex gap-5'>
+                {[
+                  { label: 'Public', state: listPublic, set: setListPublic },
+                  { label: 'Collaborative', state: listCollab, set: setListCollab },
+                ].map(({ label, state, set }) => (
+                  <label key={label} className='flex items-center gap-2 cursor-pointer group select-none'>
+                    <div
+                      onClick={() => set(p => !p)}
+                      className={`w-9 h-5 rounded-full relative transition-colors duration-200 ${state ? 'bg-[#D4AF37]' : 'bg-[#2D2D2D]'}`}
+                    >
+                      <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform duration-200 ${state ? 'translate-x-4' : 'translate-x-0.5'}`} />
                     </div>
+                    <span className='text-sm text-white/60 group-hover:text-white/90 transition-colors'>{label}</span>
+                  </label>
+                ))}
+              </div>
+
+              {/* Movie list */}
+              {listMovies.length > 0 && (
+                <div className='space-y-2 max-h-56 overflow-y-auto pr-1 scrollbar-thin'>
+                  {listMovies.map((m, i) => (
+                    <MoviePill key={`${m.id}-${i}`} movie={m} onRemove={() => setListMovies(prev => prev.filter((_, j) => j !== i))} />
                   ))}
                 </div>
               )}
-              
-              <div className='flex justify-end'>
-                <button
-                  onClick={handleListSubmit}
-                  disabled={!listName.trim() || listMovies.length === 0 || isSubmitting}
-                  className='px-6 py-2.5 bg-[#D4AF37] text-[#0A0A0A] rounded-full font-inter font-bold text-sm hover:bg-[#E8C55B] disabled:opacity-40'
-                >
-                  {isSubmitting ? 'Creating...' : 'Create List'}
-                </button>
+
+              <AddMovieBtn ctx='list' label={`+ Add Movie ${listMovies.length > 0 ? `(${listMovies.length} added)` : ''}`} />
+
+              <div className='flex items-center justify-between'>
+                <span className='text-xs text-white/30'>{listMovies.length} movie{listMovies.length !== 1 ? 's' : ''} added</span>
+                <SubmitBtn
+                  onClick={submitList}
+                  disabled={!listName.trim() || !listMovies.length}
+                  label='Create List'
+                  loadingLabel='Creating…'
+                />
               </div>
             </div>
           )}
-          
-          {/* TAB: QUICK ADD */}
-          {activeTab === 'quick-add' && (
+
+          {/* ── TAB: QUICK ADD ── */}
+          {activeTab === 'quick' && (
             <div className='space-y-4'>
-              <h3 className='font-bebas text-xl text-white tracking-wide'>QUICK ADD TO LIST</h3>
-              
-              {/* Select List */}
               <div>
-                <label className='block text-sm font-inter font-semibold text-white mb-2'>Select List</label>
-                <select
-                  value={selectedList?.id || ''}
-                  onChange={(e) => setSelectedList(userLists.find(l => l.id === e.target.value))}
-                  className='w-full bg-[#1A1A1A] border border-[#2D2D2D] rounded-xl px-4 py-3 text-white font-inter text-sm focus:outline-none focus:border-[#D4AF37]'
-                >
-                  <option value=''>Choose a list...</option>
-                  {userLists.map(list => (
-                    <option key={list.id} value={list.id}>{list.name}</option>
-                  ))}
-                </select>
+                <h3 className='font-bebas text-xl text-white tracking-wide mb-0.5'>QUICK ADD TO LIST</h3>
+                <p className='text-xs text-white/35'>Add a movie to an existing list in seconds</p>
               </div>
-              
-              {/* Select Movie */}
-              {quickAddMovie ? (
-                <div className='bg-[#1A1A1A] rounded-xl p-3 flex items-center gap-3'>
-                  {getPosterUrl(quickAddMovie.posterPath) && (
-                    <img src={getPosterUrl(quickAddMovie.posterPath)} alt={quickAddMovie.title} className='w-12 h-16 object-cover rounded' />
-                  )}
-                  <div className='flex-1'>
-                    <h4 className='font-inter font-semibold text-white text-sm'>{quickAddMovie.title}</h4>
-                    <p className='text-xs text-white/50'>{quickAddMovie.year}</p>
+
+              {/* List selector */}
+              <div>
+                <label className='block text-xs font-semibold text-white/50 uppercase tracking-wider mb-2'>Select List</label>
+                {userLists.length === 0 ? (
+                  <p className='text-white/30 text-sm italic'>No lists yet — create one first.</p>
+                ) : (
+                  <div className='grid grid-cols-1 gap-2 max-h-40 overflow-y-auto scrollbar-thin'>
+                    {userLists.map(l => (
+                      <button
+                        key={l.id}
+                        onClick={() => setQuickList(l.id)}
+                        className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-left transition-all duration-200 border ${
+                          quickList === l.id
+                            ? 'bg-[#D4AF37]/10 border-[#D4AF37]/50 text-[#D4AF37]'
+                            : 'bg-[#141414] border-[#262626] text-white/60 hover:border-[#333] hover:text-white'
+                        }`}
+                      >
+                        <span className='text-lg'>📋</span>
+                        <div className='flex-1 min-w-0'>
+                          <p className='font-semibold text-sm truncate'>{l.name}</p>
+                          <p className='text-xs opacity-50'>{l.itemCount || 0} item{l.itemCount !== 1 ? 's' : ''}</p>
+                        </div>
+                        {quickList === l.id && (
+                          <svg className='w-4 h-4' fill='currentColor' viewBox='0 0 20 20'><path fillRule='evenodd' d='M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z' clipRule='evenodd' /></svg>
+                        )}
+                      </button>
+                    ))}
                   </div>
-                  <button onClick={() => setQuickAddMovie(null)} className='p-2 text-white/40 hover:text-red-500'>
-                    <svg className='w-4 h-4' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
-                      <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M6 18L18 6M6 6l12 12' />
-                    </svg>
-                  </button>
-                </div>
-              ) : (
-                <button
-                  onClick={() => openMovieSearch('quick-add')}
-                  className='w-full p-4 border-2 border-dashed border-[#2D2D2D] rounded-xl hover:border-[#D4AF37] transition-colors'
-                >
-                  <span className='text-sm font-inter font-semibold text-[#D4AF37]'>+ Select Movie</span>
-                </button>
-              )}
-              
+                )}
+              </div>
+
+              {/* Movie selector */}
+              {quickMovie
+                ? <MoviePill movie={quickMovie} onRemove={() => setQuickMovie(null)} />
+                : <AddMovieBtn ctx='quick' />
+              }
+
               <div className='flex justify-end'>
-                <button
-                  onClick={handleQuickAdd}
-                  disabled={!selectedList || !quickAddMovie || isSubmitting}
-                  className='px-6 py-2.5 bg-[#D4AF37] text-[#0A0A0A] rounded-full font-inter font-bold text-sm hover:bg-[#E8C55B] disabled:opacity-40'
-                >
-                  {isSubmitting ? 'Adding...' : 'Add to List'}
-                </button>
+                <SubmitBtn
+                  onClick={submitQuickAdd}
+                  disabled={!quickList || !quickMovie}
+                  label='Add to List'
+                  loadingLabel='Adding…'
+                />
               </div>
             </div>
           )}
-          
+
         </div>
       </div>
-      
-      {/* Movie Search Modal */}
-      {showMovieSearch && (
-        <div className='fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4'>
-          <div className='bg-[#0A0A0A] border border-[#1A1A1A] rounded-2xl max-w-2xl w-full max-h-[80vh] overflow-hidden flex flex-col'>
-            <div className='p-4 border-b border-[#1A1A1A] flex items-center justify-between'>
-              <h3 className='font-bebas text-xl text-white tracking-wide'>SEARCH MOVIES & TV</h3>
-              <button onClick={() => setShowMovieSearch(false)} className='text-white/60 hover:text-white'>
-                <svg className='w-6 h-6' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+
+      {/* ── SEARCH MODAL ── */}
+      {searchOpen && (
+        <div
+          className='fixed inset-0 bg-black/85 backdrop-blur-sm z-50 flex items-center justify-center p-4'
+          onClick={closeSearch}
+        >
+          <div
+            className='bg-[#0E0E0E] border border-[#1E1E1E] rounded-2xl w-full max-w-lg max-h-[75vh] flex flex-col shadow-2xl'
+            onClick={e => e.stopPropagation()}
+            style={{ animation: 'slideUp 0.2s ease-out' }}
+          >
+            {/* Header */}
+            <div className='px-5 py-4 border-b border-[#1A1A1A] flex items-center justify-between'>
+              <h3 className='font-bebas text-xl text-white tracking-wide'>
+                {searchCtx === 'review' ? 'Select Movie / Show' : searchCtx === 'list' ? 'Add to List' : 'Quick Select'}
+              </h3>
+              <button onClick={closeSearch} className='text-white/40 hover:text-white transition-colors p-1.5 rounded-lg hover:bg-[#1A1A1A]'>
+                <svg className='w-5 h-5' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
                   <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M6 18L18 6M6 6l12 12' />
                 </svg>
               </button>
             </div>
-            
-            <div className='p-4'>
+
+            {/* Search input */}
+            <div className='px-5 py-3 border-b border-[#1A1A1A]'>
               <div className='relative'>
-                <input
-                  type='text'
-                  value={searchQuery}
-                  onChange={(e) => handleMovieSearch(e.target.value)}
-                  placeholder='Search...'
-                  className='w-full bg-[#1A1A1A] border border-[#2D2D2D] rounded-xl pl-10 pr-4 py-3 text-white placeholder:text-white/30 font-inter focus:outline-none focus:border-[#D4AF37]'
-                  autoFocus
-                />
-                <svg className='absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-white/30' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+                <svg className='absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
                   <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z' />
                 </svg>
+                <input
+                  type='text'
+                  value={searchQ}
+                  onChange={handleSearchInput}
+                  placeholder='Search movies & TV shows…'
+                  autoFocus
+                  className='w-full bg-[#161616] border border-[#262626] focus:border-[#D4AF37]/50 rounded-xl pl-9 pr-10 py-2.5 text-white placeholder:text-white/25 text-sm focus:outline-none transition-colors'
+                />
+                {searching && (
+                  <svg className='absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#D4AF37] animate-spin' fill='none' viewBox='0 0 24 24'>
+                    <circle className='opacity-25' cx='12' cy='12' r='10' stroke='currentColor' strokeWidth='4' />
+                    <path className='opacity-75' fill='currentColor' d='M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z' />
+                  </svg>
+                )}
               </div>
             </div>
-            
-            <div className='flex-1 overflow-y-auto p-4'>
+
+            {/* Results */}
+            <div className='flex-1 overflow-y-auto py-2 scrollbar-thin'>
               {searchResults.length > 0 ? (
-                <div className='space-y-2'>
-                  {searchResults.map((movie) => (
-                    <button
-                      key={`${movie.mediaType}-${movie.id}`}
-                      onClick={() => selectMovie(movie)}
-                      className='w-full p-3 flex items-center gap-3 hover:bg-[#1A1A1A] rounded-xl transition-colors text-left'
-                    >
-                      {getPosterUrl(movie.posterPath) ? (
-                        <img src={getPosterUrl(movie.posterPath)} alt={movie.title} className='w-12 h-16 object-cover rounded' />
-                      ) : (
-                        <div className='w-12 h-16 bg-[#2D2D2D] rounded' />
-                      )}
-                      <div className='flex-1'>
-                        <h4 className='font-inter font-medium text-white text-sm'>{movie.title}</h4>
-                        <p className='text-xs text-white/50'>{movie.year} • {movie.mediaType}</p>
-                      </div>
-                    </button>
-                  ))}
+                searchResults.map(m => (
+                  <button
+                    key={`${m.mediaType}-${m.id}`}
+                    onClick={() => pickMovie(m)}
+                    className='w-full px-5 py-3 flex items-center gap-3 hover:bg-[#181818] transition-colors text-left group'
+                  >
+                    {posterUrl(m.posterPath)
+                      ? <img src={posterUrl(m.posterPath)} alt={m.title} className='w-10 h-14 object-cover rounded-lg shadow-md flex-shrink-0' />
+                      : <div className='w-10 h-14 bg-[#222] rounded-lg flex-shrink-0 flex items-center justify-center'>
+                          <svg className='w-5 h-5 text-white/15' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={1.5} d='M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z' /></svg>
+                        </div>
+                    }
+                    <div className='flex-1 min-w-0'>
+                      <p className='text-white text-sm font-semibold group-hover:text-[#D4AF37] transition-colors truncate'>{m.title}</p>
+                      <p className='text-white/40 text-xs mt-0.5'>{m.year} · {m.mediaType === 'tv' ? 'Series' : 'Movie'}</p>
+                    </div>
+                    <svg className='w-4 h-4 text-white/20 group-hover:text-[#D4AF37] transition-colors flex-shrink-0' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+                      <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M9 5l7 7-7 7' />
+                    </svg>
+                  </button>
+                ))
+              ) : searchQ && !searching ? (
+                <div className='py-16 text-center'>
+                  <svg className='w-12 h-12 text-white/15 mx-auto mb-3' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+                    <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={1.5} d='M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z' />
+                  </svg>
+                  <p className='text-white/30 text-sm'>No results for "{searchQ}"</p>
                 </div>
-              ) : searchQuery && !isSearching ? (
-                <p className='text-center text-white/40 py-8'>No results found</p>
+              ) : !searchQ ? (
+                <div className='py-16 text-center'>
+                  <svg className='w-12 h-12 text-white/10 mx-auto mb-3' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+                    <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={1.5} d='M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z' />
+                  </svg>
+                  <p className='text-white/25 text-sm'>Start typing to search</p>
+                </div>
               ) : null}
             </div>
           </div>
         </div>
       )}
+
+      <style>{`
+        @keyframes slideUp {
+          from { opacity: 0; transform: translateY(12px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        .scrollbar-thin::-webkit-scrollbar { width: 4px; }
+        .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+        .scrollbar-thin::-webkit-scrollbar-thumb { background: #2D2D2D; border-radius: 4px; }
+        .scrollbar-thin::-webkit-scrollbar-thumb:hover { background: #D4AF37; }
+      `}</style>
     </div>
   )
 }
