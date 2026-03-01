@@ -392,7 +392,7 @@ const CreatePost = ({
                     rows={4}
                     className='w-full bg-[#141414] border border-[#262626] focus:border-[#D4AF37]/60 rounded-xl px-4 py-3 text-white placeholder:text-white/25 text-[15px] resize-none focus:outline-none transition-colors leading-relaxed'
                   />
-                  <span className='absolute bottom-3 right-4 text-[11px] text-white/25'>
+                  <span className='absolute bottom-3 right-4 text-[11px] text-white/25 font-inter'>
                     {reviewContent.length}/1000
                   </span>
                 </div>

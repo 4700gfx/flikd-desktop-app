@@ -1,14 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import supabase from '../../config/SupabaseClient'
 
-/**
- * CurrentListTab + ListModal — Flik'd (TV Episode Edition)
- *
- * Movies  → single watched toggle, displayed in a 2-column grid
- * TV Shows → per-episode checkboxes fetched live from TMDB,
- *            collapsible seasons, sub-progress bar per season,
- *            episode watched state persisted in list_item_episodes table
- */
+
 
 const TMDB_KEY = import.meta.env.VITE_TMDB_API_KEY
 
