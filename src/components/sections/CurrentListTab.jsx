@@ -1,11 +1,18 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import supabase from '../../config/SupabaseClient'
+import QuizModal, { checkQuizCooldown } from './QuizModal'
 
-
+/**
+ * CurrentListTab + ListModal — v2 with AI Quiz Integration
+ * ─────────────────────────────────────────────────────────
+ * All "mark watched" actions now gate through QuizModal:
+ *
+ *   🎬 Movie toggle     → 5-question quiz, 60%, 1-day cooldown
+ *   📺 Episode toggle   → 2-question quiz, 50%, no cooldown
+ *   📦 Season check-all → 10-question quiz, 80%, 7-day cooldown
+ */
 
 const TMDB_KEY = import.meta.env.VITE_TMDB_API_KEY
-
-/* ─── tiny helpers ─────────────────────────────────── */
 const tmdbImg  = (path, size = 'w342') => path ? `https://image.tmdb.org/t/p/${size}${path}` : null
 const relTime  = (iso) => {
   if (!iso) return ''
@@ -24,6 +31,17 @@ const Spin = ({ cls = 'w-4 h-4' }) => (
     <path className='opacity-75' fill='currentColor' d='M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z'/>
   </svg>
 )
+
+/* ─── Quiz lock badge (small) ──────────────────────── */
+const QuizLockBadge = ({ type }) => {
+  const labels = { movie: '5Q · 60%', episode: '2Q · 50%', season: '10Q · 80%' }
+  return (
+    <div className='flex items-center gap-1 px-2 py-0.5 rounded-full border border-[#D4AF37]/25 bg-[#D4AF37]/8'>
+      <span className='text-[8px]'>✨</span>
+      <span className='text-[9px] font-black text-[#D4AF37]/70 uppercase tracking-wider'>{labels[type]}</span>
+    </div>
+  )
+}
 
 /* ─── TMDB API helpers ─────────────────────────────── */
 const fetchShowSeasons = async (tmdbId) => {
@@ -60,80 +78,139 @@ const fetchSeasonEps = async (tmdbId, seasonNum) => {
 }
 
 /* ─── Episode row ──────────────────────────────────── */
-const EpisodeRow = ({ ep, watched, onToggle }) => {
-  const [busy, setBusy] = useState(false)
+const EpisodeRow = ({ ep, watched, showTitle, listItemId, seasonNum, userId, onToggle }) => {
+  const [quizOpen, setQuizOpen] = useState(false)
+  const [locked,   setLocked]   = useState(false)
+  const [checking, setChecking] = useState(false)
   const still = ep.stillPath ? tmdbImg(ep.stillPath, 'w300') : null
+  const refId = `${listItemId}-S${seasonNum}E${ep.episodeNum}`
 
-  const handle = async (e) => {
+  /* Check cooldown on mount — episodes have no cooldown so this is quick */
+  useEffect(() => {
+    let live = true
+    if (!watched) {
+      checkQuizCooldown(userId, refId, 'episode')
+        .then(({ blocked }) => { if (live) setLocked(blocked) })
+        .catch(() => {})
+    }
+    return () => { live = false }
+  }, [watched, refId, userId])
+
+  const handleClick = async (e) => {
     e.stopPropagation()
-    setBusy(true)
-    await onToggle(ep)
-    setBusy(false)
+    if (watched) {
+      // Un-watching is free (no quiz needed)
+      onToggle(ep)
+      return
+    }
+    // Open quiz
+    setQuizOpen(true)
+  }
+
+  const handlePass = () => {
+    setQuizOpen(false)
+    onToggle(ep)
   }
 
   return (
-    <div className={`flex items-center gap-3 px-3 py-2 rounded-xl transition-all group ${
-      watched ? 'bg-[#D4AF37]/5' : 'hover:bg-white/[0.025]'
-    }`}>
-      {/* Thumbnail */}
-      {still
-        ? <img src={still} alt={ep.name}
-            className={`w-[72px] h-[42px] object-cover rounded-lg flex-shrink-0 transition-all ${
-              watched ? 'brightness-40' : 'brightness-70 group-hover:brightness-90'
-            }`}/>
-        : <div className='w-[72px] h-[42px] bg-[#161616] rounded-lg flex-shrink-0 flex items-center justify-center'>
-            <svg className='w-4 h-4 text-[#2A2A2A]' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
-              <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={1.5}
-                d='M15 10l4.553-2.069A1 1 0 0121 8.82v6.36a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z'/>
-            </svg>
-          </div>
-      }
+    <>
+      <div className={`flex items-center gap-3 px-3 py-2 rounded-xl transition-all group ${
+        watched ? 'bg-[#D4AF37]/5' : 'hover:bg-white/[0.025]'
+      }`}>
+        {/* Thumbnail */}
+        {still
+          ? <img src={still} alt={ep.name}
+              className={`w-[72px] h-[42px] object-cover rounded-lg flex-shrink-0 transition-all ${
+                watched ? 'brightness-40' : 'brightness-70 group-hover:brightness-90'
+              }`}/>
+          : <div className='w-[72px] h-[42px] bg-[#161616] rounded-lg flex-shrink-0 flex items-center justify-center'>
+              <svg className='w-4 h-4 text-[#2A2A2A]' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+                <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={1.5}
+                  d='M15 10l4.553-2.069A1 1 0 0121 8.82v6.36a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z'/>
+              </svg>
+            </div>
+        }
 
-      {/* Info */}
-      <div className='flex-1 min-w-0'>
-        <p className={`text-[12px] font-semibold leading-tight ${
-          watched ? 'text-white/25 line-through decoration-white/10' : 'text-white/75'
-        }`}>
-          <span className='text-white/20 mr-1'>E{String(ep.episodeNum).padStart(2,'0')}</span>
-          {ep.name}
-        </p>
-        {ep.runtime && <p className='text-[10px] text-white/20 mt-0.5'>{ep.runtime}m</p>}
+        {/* Info */}
+        <div className='flex-1 min-w-0'>
+          <p className={`text-[12px] font-semibold leading-tight ${
+            watched ? 'text-white/25 line-through decoration-white/10' : 'text-white/75'
+          }`}>
+            <span className='text-white/20 mr-1'>E{String(ep.episodeNum).padStart(2,'0')}</span>
+            {ep.name}
+          </p>
+          {ep.runtime && <p className='text-[10px] text-white/20 mt-0.5'>{ep.runtime}m</p>}
+        </div>
+
+        {/* Quiz badge (only when not watched) */}
+        {!watched && !locked && (
+          <div className='flex-shrink-0'>
+            <QuizLockBadge type='episode' />
+          </div>
+        )}
+
+        {/* Locked indicator */}
+        {locked && !watched && (
+          <span className='text-[9px] text-red-400/50 font-bold flex-shrink-0'>Locked</span>
+        )}
+
+        {/* Toggle button */}
+        <button onClick={handleClick} disabled={checking || locked}
+          className={`flex-shrink-0 w-6 h-6 rounded-full border flex items-center justify-center transition-all duration-200 ${
+            watched
+              ? 'bg-[#D4AF37] border-[#D4AF37] text-[#0A0A0A] hover:bg-transparent hover:text-[#D4AF37]/50'
+              : locked
+                ? 'border-red-500/25 text-red-400/25 cursor-not-allowed'
+                : 'border-[#2A2A2A] text-transparent hover:border-[#D4AF37]/60 hover:text-[#D4AF37]/60 hover:bg-[#D4AF37]/8'
+          } ${checking ? 'opacity-50' : ''}`}
+        >
+          {checking
+            ? <Spin cls='w-3 h-3'/>
+            : watched
+              ? <svg className='w-3 h-3' fill='currentColor' viewBox='0 0 20 20'><path fillRule='evenodd' d='M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z' clipRule='evenodd'/></svg>
+              : locked
+                ? <svg className='w-3 h-3' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z'/></svg>
+                : <svg className='w-3 h-3' fill='currentColor' viewBox='0 0 20 20'><path fillRule='evenodd' d='M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z' clipRule='evenodd'/></svg>
+          }
+        </button>
       </div>
 
-      {/* Toggle */}
-      <button onClick={handle} disabled={busy}
-        className={`flex-shrink-0 w-5 h-5 rounded-full border flex items-center justify-center transition-all duration-150 ${
-          watched
-            ? 'bg-[#D4AF37] border-[#D4AF37] text-[#0A0A0A]'
-            : 'border-[#2A2A2A] text-transparent hover:border-[#D4AF37]/50 hover:text-[#D4AF37]/50'
-        } ${busy ? 'opacity-40' : ''}`}
-      >
-        {busy
-          ? <Spin cls='w-2.5 h-2.5'/>
-          : <svg className='w-2.5 h-2.5' fill='currentColor' viewBox='0 0 20 20'>
-              <path fillRule='evenodd' d='M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z' clipRule='evenodd'/>
-            </svg>
-        }
-      </button>
-    </div>
+      {/* Episode Quiz */}
+      {quizOpen && (
+        <QuizModal
+          type='episode'
+          title={showTitle}
+          seasonNum={seasonNum}
+          episodeNum={ep.episodeNum}
+          episodeName={ep.name}
+          refId={refId}
+          userId={userId}
+          onPass={handlePass}
+          onClose={() => setQuizOpen(false)}
+        />
+      )}
+    </>
   )
 }
 
 /* ─── Season accordion ─────────────────────────────── */
-const SeasonSection = ({ season, tmdbId, watchedEps, onEpisodeToggle }) => {
-  const [open, setOpen]         = useState(season.seasonNum === 1)
-  const [episodes, setEpisodes] = useState([])
-  const [loading, setLoading]   = useState(false)
-  const fetched                 = useRef(false)
+const SeasonSection = ({ season, tvItem, watchedEps, userId, onEpisodeToggle, onSeasonComplete }) => {
+  const [open, setOpen]           = useState(season.seasonNum === 1)
+  const [episodes, setEpisodes]   = useState([])
+  const [loading, setLoading]     = useState(false)
+  const [seasonQuiz, setSeasonQuiz] = useState(false) // show season quiz
+  const [checkingLock, setCheckingLock] = useState(false)
+  const [seasonLocked, setSeasonLocked] = useState(false)
+  const fetched = useRef(false)
 
   const load = useCallback(async () => {
     if (fetched.current) return
     fetched.current = true
     setLoading(true)
-    const eps = await fetchSeasonEps(tmdbId, season.seasonNum)
+    const eps = await fetchSeasonEps(tvItem.tmdb_id, season.seasonNum)
     setEpisodes(eps)
     setLoading(false)
-  }, [tmdbId, season.seasonNum])
+  }, [tvItem.tmdb_id, season.seasonNum])
 
   useEffect(() => { if (open) load() }, [open, load])
 
@@ -144,68 +221,125 @@ const SeasonSection = ({ season, tmdbId, watchedEps, onEpisodeToggle }) => {
   const pct   = total ? Math.round((watchedCount / total) * 100) : 0
   const full  = pct === 100 && total > 0
 
+  /* Check season cooldown */
+  const checkSeasonLock = async () => {
+    const seasonRefId = `${tvItem.id}-S${season.seasonNum}-all`
+    setCheckingLock(true)
+    try {
+      const { blocked } = await checkQuizCooldown(userId, seasonRefId, 'season')
+      setSeasonLocked(blocked)
+    } catch {}
+    setCheckingLock(false)
+  }
+
+  const handleSeasonCheckAll = async (e) => {
+    e.stopPropagation()
+    await checkSeasonLock()
+    setSeasonQuiz(true)
+  }
+
+  const handleSeasonPass = () => {
+    setSeasonQuiz(false)
+    onSeasonComplete?.(season.seasonNum, episodes)
+  }
+
   return (
-    <div className={`rounded-xl border overflow-hidden transition-all ${
-      full ? 'border-[#D4AF37]/20' : 'border-[#181818]'
-    }`}>
-      {/* Season header — click to expand */}
-      <button
-        onClick={() => { setOpen(p => !p); load() }}
-        className='w-full flex items-center gap-3 px-4 py-3 hover:bg-[#0F0F0F] transition-colors text-left'
-      >
-        {season.posterPath
-          ? <img src={tmdbImg(season.posterPath,'w92')} alt={season.name}
-              className='w-8 h-11 object-cover rounded-md flex-shrink-0'/>
-          : <div className='w-8 h-11 bg-[#1A1A1A] rounded-md flex-shrink-0'/>
-        }
+    <>
+      <div className={`rounded-xl border overflow-hidden transition-all ${
+        full ? 'border-[#D4AF37]/20' : 'border-[#181818]'
+      }`}>
+        {/* Season header */}
+        <div className='w-full flex items-center gap-3 px-4 py-3 hover:bg-[#0F0F0F] transition-colors text-left'>
+          {/* Clickable left portion to expand */}
+          <button className='flex items-center gap-3 flex-1 min-w-0 text-left'
+            onClick={() => { setOpen(p => !p); load() }}>
+            {season.posterPath
+              ? <img src={tmdbImg(season.posterPath,'w92')} alt={season.name}
+                  className='w-8 h-11 object-cover rounded-md flex-shrink-0'/>
+              : <div className='w-8 h-11 bg-[#1A1A1A] rounded-md flex-shrink-0'/>
+            }
 
-        <div className='flex-1 min-w-0'>
-          <div className='flex items-center justify-between mb-1.5'>
-            <span className={`text-[13px] font-bold ${full ? 'text-[#D4AF37]' : 'text-white/75'}`}>
-              {season.name}
-            </span>
-            <div className='flex items-center gap-2'>
-              <span className='text-[11px] text-white/25 tabular-nums'>{watchedCount}/{total}</span>
-              {full && <span className='text-[#D4AF37] text-xs'>✓</span>}
-              <svg className={`w-3.5 h-3.5 text-white/25 transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
-                fill='none' stroke='currentColor' viewBox='0 0 24 24'>
-                <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M19 9l-7 7-7-7'/>
-              </svg>
+            <div className='flex-1 min-w-0'>
+              <div className='flex items-center justify-between mb-1.5'>
+                <span className={`text-[13px] font-bold ${full ? 'text-[#D4AF37]' : 'text-white/75'}`}>
+                  {season.name}
+                </span>
+                <div className='flex items-center gap-2'>
+                  <span className='text-[11px] text-white/25 tabular-nums'>{watchedCount}/{total}</span>
+                  {full && <span className='text-[#D4AF37] text-xs'>✓</span>}
+                  <svg className={`w-3.5 h-3.5 text-white/25 transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
+                    fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+                    <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M19 9l-7 7-7-7'/>
+                  </svg>
+                </div>
+              </div>
+              <div className='w-full h-1 bg-[#181818] rounded-full overflow-hidden'>
+                <div className={`h-full rounded-full transition-all duration-500 ${
+                  full ? 'bg-gradient-to-r from-[#D4AF37] to-[#E8C55B]' : 'bg-[#D4AF37]/50'
+                }`} style={{ width:`${pct}%` }}/>
+              </div>
             </div>
-          </div>
-          {/* Per-season progress bar */}
-          <div className='w-full h-1 bg-[#181818] rounded-full overflow-hidden'>
-            <div className={`h-full rounded-full transition-all duration-500 ${
-              full ? 'bg-gradient-to-r from-[#D4AF37] to-[#E8C55B]' : 'bg-[#D4AF37]/50'
-            }`} style={{ width:`${pct}%` }}/>
-          </div>
-        </div>
-      </button>
+          </button>
 
-      {/* Episodes list */}
-      {open && (
-        <div className='border-t border-[#111] bg-[#080808] px-2 py-2 space-y-0.5'>
-          {loading
-            ? <div className='py-5 flex justify-center'><Spin cls='w-5 h-5'/></div>
-            : episodes.length === 0
-              ? <p className='py-4 text-center text-[11px] text-white/20'>No episodes found</p>
-              : episodes.map(ep => (
-                  <EpisodeRow
-                    key={`${season.seasonNum}-${ep.episodeNum}`}
-                    ep={ep}
-                    watched={watchedEps.has(`${season.seasonNum}-${ep.episodeNum}`)}
-                    onToggle={(ep) => onEpisodeToggle(season.seasonNum, ep)}
-                  />
-                ))
-          }
+          {/* Season check-all button */}
+          {!full && total > 0 && (
+            <button
+              onClick={handleSeasonCheckAll}
+              disabled={checkingLock}
+              className='flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl
+                border border-[#D4AF37]/25 bg-[#D4AF37]/8 hover:bg-[#D4AF37]/15
+                text-[#D4AF37]/80 hover:text-[#D4AF37] transition-all duration-200
+                text-[9px] font-black uppercase tracking-wider'
+              title={`Mark all ${total} episodes watched — requires 10-question season quiz`}>
+              {checkingLock ? <Spin cls='w-3 h-3'/> : '✨'}
+              <span className='hidden sm:inline'>Complete Season</span>
+            </button>
+          )}
         </div>
+
+        {/* Episodes list */}
+        {open && (
+          <div className='border-t border-[#111] bg-[#080808] px-2 py-2 space-y-0.5'>
+            {loading
+              ? <div className='py-5 flex justify-center'><Spin cls='w-5 h-5'/></div>
+              : episodes.length === 0
+                ? <p className='py-4 text-center text-[11px] text-white/20'>No episodes found</p>
+                : episodes.map(ep => (
+                    <EpisodeRow
+                      key={`${season.seasonNum}-${ep.episodeNum}`}
+                      ep={ep}
+                      watched={watchedEps.has(`${season.seasonNum}-${ep.episodeNum}`)}
+                      showTitle={tvItem.title}
+                      listItemId={tvItem.id}
+                      seasonNum={season.seasonNum}
+                      userId={userId}
+                      onToggle={(ep) => onEpisodeToggle(season.seasonNum, ep)}
+                    />
+                  ))
+            }
+          </div>
+        )}
+      </div>
+
+      {/* Season Quiz */}
+      {seasonQuiz && (
+        <QuizModal
+          type='season'
+          title={tvItem.title}
+          seasonNum={season.seasonNum}
+          posterPath={tvItem.poster_path}
+          refId={`${tvItem.id}-S${season.seasonNum}-all`}
+          userId={userId}
+          onPass={handleSeasonPass}
+          onClose={() => setSeasonQuiz(false)}
+        />
       )}
-    </div>
+    </>
   )
 }
 
-/* ─── TV Show card (full-width) ────────────────────── */
-const TVCard = ({ item, index, onTVProgressChange }) => {
+/* ─── TV Show card ─────────────────────────────────── */
+const TVCard = ({ item, index, userId, onTVProgressChange }) => {
   const [seasons, setSeasons]       = useState([])
   const [watchedEps, setWatchedEps] = useState(new Set())
   const [loadingTV, setLoadingTV]   = useState(true)
@@ -217,9 +351,7 @@ const TVCard = ({ item, index, onTVProgressChange }) => {
       setLoadingTV(true)
       const [seas, { data: saved }] = await Promise.all([
         fetchShowSeasons(item.tmdb_id),
-        supabase
-          .from('list_item_episodes')
-          .select('season_num, episode_num, is_watched')
+        supabase.from('list_item_episodes').select('season_num, episode_num, is_watched')
           .eq('list_item_id', item.id)
       ])
       if (cancelled) return
@@ -259,7 +391,6 @@ const TVCard = ({ item, index, onTVProgressChange }) => {
       const newCount = nowWatch ? watchedEps.size + 1 : watchedEps.size - 1
       onTVProgressChange?.(item.id, newCount, totalEps)
     } catch (err) {
-      console.error('episode toggle:', err)
       setWatchedEps(prev => {
         const next = new Set(prev)
         nowWatch ? next.delete(key) : next.add(key)
@@ -267,6 +398,31 @@ const TVCard = ({ item, index, onTVProgressChange }) => {
       })
     }
   }, [watchedEps, item.id, totalEps, onTVProgressChange])
+
+  /* Mark ALL episodes in a season as watched (after passing season quiz) */
+  const handleSeasonComplete = useCallback(async (seasonNum, episodes) => {
+    // Optimistically mark all as watched
+    const keys = episodes.map(ep => `${seasonNum}-${ep.episodeNum}`)
+    setWatchedEps(prev => {
+      const next = new Set(prev)
+      keys.forEach(k => next.add(k))
+      return next
+    })
+    try {
+      await supabase.from('list_item_episodes').upsert(
+        episodes.map(ep => ({
+          list_item_id: item.id,
+          season_num:   seasonNum,
+          episode_num:  ep.episodeNum,
+          episode_name: ep.name,
+          is_watched:   true,
+          watched_at:   new Date().toISOString(),
+        })),
+        { onConflict: 'list_item_id,season_num,episode_num' }
+      )
+      onTVProgressChange?.(item.id, watchedEps.size + keys.length, totalEps)
+    } catch {}
+  }, [item.id, watchedEps, totalEps, onTVProgressChange])
 
   const bg = item.backdrop_path ? tmdbImg(item.backdrop_path, 'w780') : null
   const p  = item.poster_path   ? tmdbImg(item.poster_path)           : null
@@ -278,7 +434,6 @@ const TVCard = ({ item, index, onTVProgressChange }) => {
       }`}
       style={{ animation: `cardIn 0.3s ease-out ${Math.min(index * 0.04, 0.4)}s both` }}
     >
-      {/* Faint backdrop wash */}
       {bg && (
         <div className='absolute inset-0 pointer-events-none overflow-hidden'>
           <img src={bg} alt='' className='w-full h-full object-cover opacity-[0.06] scale-105'/>
@@ -287,7 +442,6 @@ const TVCard = ({ item, index, onTVProgressChange }) => {
       )}
 
       <div className='relative'>
-        {/* Show header row */}
         <div className='flex gap-4 p-5'>
           {p
             ? <img src={p} alt={item.title}
@@ -296,13 +450,12 @@ const TVCard = ({ item, index, onTVProgressChange }) => {
           }
 
           <div className='flex-1 min-w-0'>
-            <div className='flex items-center gap-2 mb-1'>
+            <div className='flex items-center gap-2 mb-1 flex-wrap'>
               <span className='text-[10px] font-black text-[#D4AF37]/50 uppercase tracking-widest'>📺 Series</span>
               {full && <span className='text-[10px] font-black text-[#D4AF37] uppercase tracking-widest'>Complete ✓</span>}
             </div>
             <h4 className='font-bold text-[16px] text-white leading-snug mb-3'>{item.title}</h4>
 
-            {/* Overall episode progress bar */}
             {loadingTV
               ? <div className='flex items-center gap-2'><Spin cls='w-3.5 h-3.5'/><span className='text-[11px] text-white/25'>Loading episodes…</span></div>
               : (
@@ -328,6 +481,16 @@ const TVCard = ({ item, index, onTVProgressChange }) => {
           </div>
         </div>
 
+        {/* Season quiz note */}
+        {!loadingTV && !full && (
+          <div className='px-5 pb-3 flex items-center gap-2'>
+            <QuizLockBadge type='episode' />
+            <span className='text-[9px] text-white/20'>Episode check · </span>
+            <QuizLockBadge type='season' />
+            <span className='text-[9px] text-white/20'>Season check-all</span>
+          </div>
+        )}
+
         {/* Toggle seasons button */}
         {!loadingTV && seasons.length > 0 && (
           <button
@@ -344,16 +507,17 @@ const TVCard = ({ item, index, onTVProgressChange }) => {
           </button>
         )}
 
-        {/* Season list */}
         {showSeasons && !loadingTV && (
           <div className='px-4 pb-4 pt-3 space-y-2 border-t border-[#111]'>
             {seasons.map(s => (
               <SeasonSection
                 key={s.seasonNum}
                 season={s}
-                tmdbId={item.tmdb_id}
+                tvItem={item}
                 watchedEps={watchedEps}
+                userId={userId}
                 onEpisodeToggle={handleEpisodeToggle}
+                onSeasonComplete={handleSeasonComplete}
               />
             ))}
           </div>
@@ -363,135 +527,190 @@ const TVCard = ({ item, index, onTVProgressChange }) => {
   )
 }
 
-/* ─── Movie card (1 of 2 columns) ──────────────────── */
-const MovieCard = ({ item, index, onToggle }) => {
-  const [busy, setBusy]         = useState(false)
-  const [expanded, setExpanded] = useState(false)
+/* ─── Movie card ───────────────────────────────────── */
+const MovieCard = ({ item, index, userId, onToggle }) => {
+  const [quizOpen,  setQuizOpen]  = useState(false)
+  const [locked,    setLocked]    = useState(false)
+  const [checking,  setChecking]  = useState(false)
+  const [expanded,  setExpanded]  = useState(false)
   const p  = item.poster_path   ? tmdbImg(item.poster_path)           : null
   const bg = item.backdrop_path ? tmdbImg(item.backdrop_path, 'w780') : null
   const hasMore = item.overview && item.overview.length > 100
 
+  /* Check cooldown on mount */
+  useEffect(() => {
+    let live = true
+    if (!item.is_completed) {
+      checkQuizCooldown(userId, item.id, 'movie')
+        .then(({ blocked }) => { if (live) setLocked(blocked) })
+        .catch(() => {})
+    }
+    return () => { live = false }
+  }, [item.id, item.is_completed, userId])
+
   const handleToggle = async (e) => {
     e.stopPropagation()
-    setBusy(true)
-    await onToggle(item)
-    setBusy(false)
+    if (item.is_completed) {
+      // Un-watching doesn't need a quiz
+      onToggle(item)
+      return
+    }
+    // Check cooldown fresh before opening
+    setChecking(true)
+    try {
+      const { blocked } = await checkQuizCooldown(userId, item.id, 'movie')
+      setLocked(blocked)
+      if (!blocked) setQuizOpen(true)
+    } catch {
+      setQuizOpen(true)
+    }
+    setChecking(false)
+  }
+
+  const handlePass = () => {
+    setQuizOpen(false)
+    onToggle(item)
   }
 
   return (
-    <div
-      className={`relative rounded-2xl border overflow-hidden flex flex-col transition-all duration-300 ${
-        item.is_completed
-          ? 'border-[#D4AF37]/20 bg-[#D4AF37]/[0.04]'
-          : 'border-[#1C1C1C] bg-[#0D0D0D] hover:border-[#252525]'
-      }`}
-      style={{ animation:`cardIn 0.3s ease-out ${Math.min(index * 0.04, 0.4)}s both` }}
-    >
-      {/* Backdrop strip */}
-      <div className='relative h-[80px] flex-shrink-0 overflow-hidden bg-[#111]'>
-        {bg
-          ? <img src={bg} alt='' className={`w-full h-full object-cover transition-all ${
-              item.is_completed ? 'opacity-15' : 'opacity-25 hover:opacity-35'
-            }`}/>
-          : <div className='w-full h-full bg-gradient-to-br from-[#161616] to-[#0D0D0D]'/>
-        }
-        <div className='absolute inset-0 bg-gradient-to-b from-transparent to-[#0D0D0D]'/>
-        {/* Number badge */}
-        <div className='absolute top-2 left-2 w-5 h-5 rounded-full bg-black/60 flex items-center justify-center'>
-          <span className='text-[9px] font-bold text-white/40'>{index + 1}</span>
-        </div>
-        {/* Watched toggle — in backdrop corner */}
-        <button onClick={handleToggle} disabled={busy}
-          className={`absolute top-2 right-2 w-6 h-6 rounded-full border flex items-center justify-center transition-all duration-200 ${
-            item.is_completed
-              ? 'bg-[#D4AF37] border-[#D4AF37] text-[#0A0A0A] shadow-lg shadow-[#D4AF37]/20'
-              : 'bg-black/50 border-white/20 text-white/40 hover:border-[#D4AF37]/60 hover:text-[#D4AF37]'
-          } ${busy ? 'opacity-40' : ''}`}
-        >
-          {busy
-            ? <Spin cls='w-2.5 h-2.5'/>
-            : <svg className='w-3 h-3' fill='currentColor' viewBox='0 0 20 20'>
-                <path fillRule='evenodd' d='M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z' clipRule='evenodd'/>
-              </svg>
+    <>
+      <div
+        className={`relative rounded-2xl border overflow-hidden flex flex-col transition-all duration-300 ${
+          item.is_completed
+            ? 'border-[#D4AF37]/20 bg-[#D4AF37]/[0.04]'
+            : locked
+              ? 'border-red-500/15 bg-[#0D0D0D]'
+              : 'border-[#1C1C1C] bg-[#0D0D0D] hover:border-[#252525]'
+        }`}
+        style={{ animation:`cardIn 0.3s ease-out ${Math.min(index * 0.04, 0.4)}s both` }}
+      >
+        {/* Backdrop strip */}
+        <div className='relative h-[80px] flex-shrink-0 overflow-hidden bg-[#111]'>
+          {bg
+            ? <img src={bg} alt='' className={`w-full h-full object-cover transition-all ${
+                item.is_completed ? 'opacity-15' : 'opacity-25 hover:opacity-35'
+              }`}/>
+            : <div className='w-full h-full bg-gradient-to-br from-[#161616] to-[#0D0D0D]'/>
           }
-        </button>
-      </div>
+          <div className='absolute inset-0 bg-gradient-to-b from-transparent to-[#0D0D0D]'/>
+          <div className='absolute top-2 left-2 w-5 h-5 rounded-full bg-black/60 flex items-center justify-center'>
+            <span className='text-[9px] font-bold text-white/40'>{index + 1}</span>
+          </div>
 
-      {/* Body */}
-      <div className='flex gap-3 px-3 py-3 flex-1'>
-        {/* Poster overlapping strip */}
-        <div className='flex-shrink-0 -mt-10 z-10'>
-          {p
-            ? <div className='relative'>
-                <img src={p} alt={item.title}
-                  className={`w-[52px] h-[76px] object-cover rounded-lg shadow-xl ring-1 transition-all ${
-                    item.is_completed ? 'ring-[#D4AF37]/25 brightness-50' : 'ring-white/10'
-                  }`}/>
-                {item.is_completed && (
-                  <div className='absolute inset-0 rounded-lg flex items-center justify-center'>
-                    <svg className='w-5 h-5 text-[#D4AF37]' fill='currentColor' viewBox='0 0 20 20'>
-                      <path fillRule='evenodd' d='M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z' clipRule='evenodd'/>
-                    </svg>
-                  </div>
-                )}
-              </div>
-            : <div className='w-[52px] h-[76px] -mt-0 bg-[#1A1A1A] rounded-lg ring-1 ring-white/5'/>
-          }
+          {/* Watch toggle */}
+          <button onClick={handleToggle} disabled={checking}
+            className={`absolute top-2 right-2 w-7 h-7 rounded-full border flex items-center justify-center transition-all duration-200 ${
+              item.is_completed
+                ? 'bg-[#D4AF37] border-[#D4AF37] text-[#0A0A0A] shadow-lg shadow-[#D4AF37]/20 hover:shadow-[#D4AF37]/30'
+                : locked
+                  ? 'bg-black/50 border-red-500/25 text-red-400/40 cursor-not-allowed'
+                  : 'bg-black/50 border-[#D4AF37]/30 text-[#D4AF37]/60 hover:border-[#D4AF37] hover:text-[#D4AF37] hover:bg-[#D4AF37]/15'
+            } ${checking ? 'opacity-50' : ''}`}
+          >
+            {checking
+              ? <Spin cls='w-3 h-3'/>
+              : item.is_completed
+                ? <svg className='w-3.5 h-3.5' fill='currentColor' viewBox='0 0 20 20'><path fillRule='evenodd' d='M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z' clipRule='evenodd'/></svg>
+                : locked
+                  ? <svg className='w-3.5 h-3.5' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z'/></svg>
+                  : <span className='text-[9px] font-black leading-none'>✨</span>
+            }
+          </button>
+
+          {/* Quiz badge on the backdrop */}
+          {!item.is_completed && !locked && (
+            <div className='absolute bottom-2 right-2'>
+              <QuizLockBadge type='movie' />
+            </div>
+          )}
+          {locked && !item.is_completed && (
+            <div className='absolute bottom-2 right-2 flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-500/10 border border-red-500/20'>
+              <span className='text-[8px] text-red-400/60 font-bold'>⏳ Locked</span>
+            </div>
+          )}
         </div>
 
-        <div className='flex-1 min-w-0'>
-          <h4 className={`font-bold text-[13px] leading-snug mb-1 transition-colors ${
-            item.is_completed ? 'text-white/30 line-through decoration-white/15' : 'text-white'
-          }`}>
-            {item.title}
-          </h4>
-
-          {/* Time meta */}
-          <div className='text-[10px] text-white/25 mb-2 leading-relaxed'>
-            {item.added_at && <span>Added {relTime(item.added_at)}</span>}
-            {item.is_completed && item.completed_at &&
-              <span className='text-[#D4AF37]/45 ml-1'>· Watched {relTime(item.completed_at)}</span>
+        {/* Body */}
+        <div className='flex gap-3 px-3 py-3 flex-1'>
+          <div className='flex-shrink-0 -mt-10 z-10'>
+            {p
+              ? <div className='relative'>
+                  <img src={p} alt={item.title}
+                    className={`w-[52px] h-[76px] object-cover rounded-lg shadow-xl ring-1 transition-all ${
+                      item.is_completed ? 'ring-[#D4AF37]/25 brightness-50' : 'ring-white/10'
+                    }`}/>
+                  {item.is_completed && (
+                    <div className='absolute inset-0 rounded-lg flex items-center justify-center'>
+                      <svg className='w-5 h-5 text-[#D4AF37]' fill='currentColor' viewBox='0 0 20 20'>
+                        <path fillRule='evenodd' d='M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z' clipRule='evenodd'/>
+                      </svg>
+                    </div>
+                  )}
+                </div>
+              : <div className='w-[52px] h-[76px] bg-[#1A1A1A] rounded-lg ring-1 ring-white/5'/>
             }
           </div>
 
-          {/* Overview snippet */}
-          {item.overview && (
-            <div>
-              <p className={`text-[11px] text-white/35 leading-relaxed ${expanded ? '' : 'line-clamp-2'}`}>
-                {item.overview}
-              </p>
-              {hasMore && (
-                <button
-                  onClick={(e) => { e.stopPropagation(); setExpanded(p => !p) }}
-                  className='text-[10px] text-[#D4AF37]/45 hover:text-[#D4AF37] mt-0.5 transition-colors'
-                >
-                  {expanded ? '↑ Less' : '↓ More'}
-                </button>
-              )}
+          <div className='flex-1 min-w-0'>
+            <h4 className={`font-bold text-[13px] leading-snug mb-1 transition-colors ${
+              item.is_completed ? 'text-white/30 line-through decoration-white/15' : 'text-white'
+            }`}>
+              {item.title}
+            </h4>
+            <div className='text-[10px] text-white/25 mb-2 leading-relaxed'>
+              {item.added_at && <span>Added {relTime(item.added_at)}</span>}
+              {item.is_completed && item.completed_at &&
+                <span className='text-[#D4AF37]/45 ml-1'>· Watched {relTime(item.completed_at)}</span>
+              }
             </div>
-          )}
 
-          {/* Quiz score */}
-          {item.quiz_score != null && (
-            <div className='inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#181818] border border-[#222] mt-2'>
-              <svg className='w-2.5 h-2.5 text-[#D4AF37]' fill='currentColor' viewBox='0 0 20 20'>
-                <path d='M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z'/>
-              </svg>
-              <span className='text-[10px] font-bold text-white/50'>Quiz {item.quiz_score}%</span>
-            </div>
-          )}
+            {item.overview && (
+              <div>
+                <p className={`text-[11px] text-white/35 leading-relaxed ${expanded ? '' : 'line-clamp-2'}`}>
+                  {item.overview}
+                </p>
+                {hasMore && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setExpanded(p => !p) }}
+                    className='text-[10px] text-[#D4AF37]/45 hover:text-[#D4AF37] mt-0.5 transition-colors'>
+                    {expanded ? '↑ Less' : '↓ More'}
+                  </button>
+                )}
+              </div>
+            )}
+
+            {item.quiz_score != null && (
+              <div className='inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#181818] border border-[#222] mt-2'>
+                <span className='text-[#D4AF37] text-xs'>✨</span>
+                <span className='text-[10px] font-bold text-white/50'>Quiz {item.quiz_score}%</span>
+              </div>
+            )}
+          </div>
         </div>
       </div>
-    </div>
+
+      {/* Movie Quiz */}
+      {quizOpen && (
+        <QuizModal
+          type='movie'
+          title={item.title}
+          posterPath={item.poster_path}
+          refId={item.id}
+          userId={userId}
+          onPass={handlePass}
+          onClose={() => setQuizOpen(false)}
+        />
+      )}
+    </>
   )
 }
 
 /* ─── List Detail Modal ────────────────────────────── */
-const ListModal = ({ list, onClose, onCountChange }) => {
-  const [items, setItems]     = useState([])
+const ListModal = ({ list, userId, onClose, onCountChange }) => {
+  const [items,   setItems]   = useState([])
   const [loading, setLoading] = useState(true)
-  const [error, setError]     = useState(null)
-  const [filter, setFilter]   = useState('all')
+  const [error,   setError]   = useState(null)
+  const [filter,  setFilter]  = useState('all')
 
   useEffect(() => {
     let cancelled = false
@@ -520,9 +739,7 @@ const ListModal = ({ list, onClose, onCountChange }) => {
     const doneAt  = newDone ? new Date().toISOString() : null
     setItems(prev => prev.map(i => i.id === item.id ? {...i, is_completed:newDone, completed_at:doneAt} : i))
     try {
-      const { error } = await supabase.from('list_items')
-        .update({ is_completed:newDone, completed_at:doneAt }).eq('id', item.id)
-      if (error) throw error
+      await supabase.from('list_items').update({ is_completed:newDone, completed_at:doneAt }).eq('id', item.id)
       setItems(cur => {
         onCountChange?.(list.id, cur.filter(i => i.is_completed).length, cur.length)
         return cur
@@ -552,17 +769,19 @@ const ListModal = ({ list, onClose, onCountChange }) => {
                    : shows
 
   return (
-    <div
-      className='fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-md'
+    <div className='fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-md'
       onClick={e => e.target === e.currentTarget && onClose()}
-      style={{ animation:'overlayIn 0.2s ease-out' }}
-    >
-      {/* Wide modal */}
-      <div
-        className='bg-[#080808] border border-[#1C1C1C] rounded-3xl w-full max-w-4xl max-h-[92vh] flex flex-col shadow-[0_40px_100px_rgba(0,0,0,0.9)]'
-        style={{ animation:'modalIn 0.25s cubic-bezier(0.34,1.56,0.64,1)' }}
-      >
-        {/* ── Header ── */}
+      style={{ animation:'overlayIn 0.2s ease-out' }}>
+
+      <div className='bg-[#080808] border border-[#1C1C1C] rounded-3xl w-full max-w-4xl max-h-[92vh] flex flex-col shadow-[0_40px_100px_rgba(0,0,0,0.9)]'
+        style={{ animation:'modalIn 0.25s cubic-bezier(0.34,1.56,0.64,1)' }}>
+
+        {/* Gold top bar */}
+        <div className='h-[2px] flex-shrink-0 rounded-t-3xl overflow-hidden'>
+          <div className='h-full' style={{ background: 'linear-gradient(90deg, transparent, #D4AF37 25%, #F0C93A 50%, #D4AF37 75%, transparent)' }} />
+        </div>
+
+        {/* Header */}
         <div className='px-7 pt-7 pb-0 flex-shrink-0'>
           <div className='flex items-start justify-between gap-4 mb-5'>
             <div className='flex-1 min-w-0'>
@@ -573,9 +792,17 @@ const ListModal = ({ list, onClose, onCountChange }) => {
                 )}
               </div>
               {list.description && <p className='text-white/30 text-sm'>{list.description}</p>}
+
+              {/* AI quiz notice */}
+              <div className='flex items-center gap-2 mt-2'>
+                <span className='text-base'>✨</span>
+                <p className='text-[11px] text-white/30'>
+                  Watching is verified by AI quiz — films need 60%, episodes 50%, full seasons 80%
+                </p>
+              </div>
             </div>
             <button onClick={onClose}
-              className='w-9 h-9 flex items-center justify-center rounded-xl text-white/20 hover:text-white hover:bg-[#181818] transition-all flex-shrink-0'>
+              className='w-9 h-9 flex items-center justify-center rounded-xl text-white/20 hover:text-white hover:bg-[#181818] transition-all flex-shrink-0 hover:rotate-90 duration-200'>
               <svg className='w-5 h-5' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
                 <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M6 18L18 6M6 6l12 12'/>
               </svg>
@@ -624,8 +851,7 @@ const ListModal = ({ list, onClose, onCountChange }) => {
                 <button key={t.id} onClick={() => setFilter(t.id)}
                   className={`px-4 py-2.5 text-xs font-bold transition-all border-b-2 -mb-px ${
                     filter===t.id ? 'text-[#D4AF37] border-[#D4AF37]' : 'text-white/25 border-transparent hover:text-white/50'
-                  }`}
-                >
+                  }`}>
                   {t.label}
                   <span className={`ml-1.5 px-1.5 py-0.5 rounded text-[10px] ${
                     filter===t.id ? 'bg-[#D4AF37]/15 text-[#D4AF37]' : 'bg-[#181818] text-white/20'
@@ -636,7 +862,7 @@ const ListModal = ({ list, onClose, onCountChange }) => {
           )}
         </div>
 
-        {/* ── Scrollable body ── */}
+        {/* Scrollable body */}
         <div className='flex-1 overflow-y-auto px-7 py-5 scrollbar-modal'>
           {loading ? (
             <div className='py-32 flex flex-col items-center gap-4'>
@@ -649,24 +875,21 @@ const ListModal = ({ list, onClose, onCountChange }) => {
             <div className='py-32 text-center'>
               <div className='w-16 h-16 bg-[#111] rounded-full flex items-center justify-center mx-auto mb-4'>
                 <svg className='w-8 h-8 text-[#1E1E1E]' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
-                  <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={1.5} d='M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z'/>
+                  <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={1.5} d='M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4'/>
                 </svg>
               </div>
               <p className='text-white/20 text-sm'>No titles in this list yet.</p>
             </div>
           ) : (
             <div className='space-y-5'>
-              {/* TV shows always span full width */}
               {filtShows.length > 0 && (
                 <div className='space-y-3'>
                   <p className='text-[10px] font-black text-white/20 uppercase tracking-widest'>TV Shows</p>
                   {filtShows.map((show, i) => (
-                    <TVCard key={show.id} item={show} index={i} onTVProgressChange={handleTVProgress}/>
+                    <TVCard key={show.id} item={show} index={i} userId={userId} onTVProgressChange={handleTVProgress}/>
                   ))}
                 </div>
               )}
-
-              {/* Movies in 2-column grid */}
               {filtMovies.length > 0 && (
                 <div>
                   {filtShows.length > 0 && (
@@ -674,12 +897,11 @@ const ListModal = ({ list, onClose, onCountChange }) => {
                   )}
                   <div className='grid grid-cols-2 gap-3'>
                     {filtMovies.map((m, i) => (
-                      <MovieCard key={m.id} item={m} index={i} onToggle={handleMovieToggle}/>
+                      <MovieCard key={m.id} item={m} index={i} userId={userId} onToggle={handleMovieToggle}/>
                     ))}
                   </div>
                 </div>
               )}
-
               {filtMovies.length === 0 && filtShows.length === 0 && (
                 <div className='py-20 text-center'>
                   <p className='text-white/20 text-sm'>No {filter} titles.</p>
@@ -689,11 +911,11 @@ const ListModal = ({ list, onClose, onCountChange }) => {
           )}
         </div>
 
-        {/* ── Footer ── */}
+        {/* Footer */}
         <div className='px-7 py-4 border-t border-[#141414] flex items-center justify-between flex-shrink-0'>
           <span className='text-white/15 text-xs tabular-nums'>
             {items.length} title{items.length!==1?'s':''}
-            {shows.length > 0 && ' · episode tracking on'}
+            {shows.length > 0 && ' · AI-verified episode tracking'}
           </span>
           <button onClick={onClose}
             className='px-5 py-2 rounded-xl bg-[#141414] hover:bg-[#1C1C1C] text-white/40 hover:text-white text-sm font-semibold transition-all'>
@@ -716,7 +938,7 @@ const ListModal = ({ list, onClose, onCountChange }) => {
 }
 
 /* ─── CurrentListTab (sidebar) ─────────────────────── */
-const CurrentListTab = ({ lists = [], onViewAll, onListUpdate }) => {
+const CurrentListTab = ({ lists = [], userId, onViewAll, onListUpdate }) => {
   const [activeList, setActiveList] = useState(null)
   const [localLists, setLocalLists] = useState(lists)
 
@@ -742,9 +964,16 @@ const CurrentListTab = ({ lists = [], onViewAll, onListUpdate }) => {
             </svg>
             <h2 className='font-bebas text-[17px] tracking-widest text-white'>YOUR LISTS</h2>
           </div>
-          {localLists.length > 0 && (
-            <span className='text-[11px] font-bold text-white/20 tabular-nums'>{localLists.length}</span>
-          )}
+          <div className='flex items-center gap-2'>
+            {localLists.length > 0 && (
+              <span className='text-[11px] font-bold text-white/20 tabular-nums'>{localLists.length}</span>
+            )}
+            {/* AI badge */}
+            <div className='flex items-center gap-1 px-1.5 py-0.5 rounded-full border border-[#D4AF37]/20 bg-[#D4AF37]/5'>
+              <span className='text-[8px]'>✨</span>
+              <span className='text-[8px] font-black text-[#D4AF37]/50 uppercase tracking-wider'>AI Quiz</span>
+            </div>
+          </div>
         </div>
 
         {/* Rows */}
@@ -755,8 +984,7 @@ const CurrentListTab = ({ lists = [], onViewAll, onListUpdate }) => {
             return (
               <button key={list.id} onClick={() => setActiveList(list)}
                 className='w-full px-4 py-3.5 hover:bg-[#0D0D0D] active:bg-[#111] transition-colors text-left group'
-                style={{ animation:`rowIn 0.3s ease-out ${i*0.05}s both` }}
-              >
+                style={{ animation:`rowIn 0.3s ease-out ${i*0.05}s both` }}>
                 <div className='flex items-center justify-between gap-2 mb-2'>
                   <span className='text-sm font-semibold text-white/70 group-hover:text-white transition-colors line-clamp-1 flex-1'>
                     {list.name}
@@ -801,7 +1029,12 @@ const CurrentListTab = ({ lists = [], onViewAll, onListUpdate }) => {
       </div>
 
       {activeList && (
-        <ListModal list={activeList} onClose={() => setActiveList(null)} onCountChange={handleCountChange}/>
+        <ListModal
+          list={activeList}
+          userId={userId}
+          onClose={() => setActiveList(null)}
+          onCountChange={handleCountChange}
+        />
       )}
 
       <style>{`
