@@ -650,7 +650,6 @@ const LogInPage = () => {
                     placeholder='you@example.com'
                     className={inputCls(fields.email)}
                     disabled={loading}
-                    // eslint-disable-next-line jsx-a11y/no-autofocus
                     autoFocus
                   />
                 </Field>
