@@ -56,8 +56,124 @@ const ScoreRing = ({ pct, pass, size = 80 }) => {
   )
 }
 
-/* ─── OpenAI quiz generator ────────────────────────── */
-const generateQuiz = async ({ title, type, seasonNum, episodeNum, episodeName, count }) => {
+/* ─────────────────────────────────────────────────────
+   QUIZ CACHE SYSTEM
+   ─────────────────────────────────────────────────────
+   Two-tier caching to avoid regenerating questions:
+
+   Tier 1 — In-memory (session)
+     A simple Map keyed by cache_key. Questions survive
+     for the lifetime of the browser tab. Zero latency.
+
+   Tier 2 — Supabase (shared, persistent)
+     Table: quiz_question_pool
+       cache_key   text PK   — stable ID for this quiz subject
+       questions   jsonb      — array of ALL questions ever generated
+       created_at  timestamptz
+       updated_at  timestamptz
+       use_count   int        — how many times served from cache
+
+     When a quiz is requested:
+       1. Check memory cache  → serve & done
+       2. Check Supabase pool → load into memory, sample N, serve
+       3. Call OpenAI         → save to memory + Supabase, serve
+
+     When the pool has ≥ MIN_POOL questions:
+       We shuffle and sample N so each quiz feels fresh.
+     When serving from a large pool (≥ EXPAND_THRESHOLD):
+       We also fire a background top-up in the background
+       so the pool keeps growing and variety improves over time.
+   ───────────────────────────────────────────────────── */
+
+/* ── Config ── */
+const MIN_POOL          = 15   // minimum questions in pool before we stop expanding
+const EXPAND_THRESHOLD  = 30   // pool size at which background top-ups stop
+const TOPUP_BATCH       = 10   // extra questions generated per top-up call
+const LS_PREFIX         = 'flikd_quiz_'  // localStorage prefix for offline fallback
+
+/* ── In-memory store: cacheKey → Question[] ── */
+const memoryCache = new Map()
+
+/* ── Derive a stable cache key from quiz parameters ── */
+const buildCacheKey = ({ type, title, seasonNum, episodeNum }) => {
+  const slug = title.toLowerCase().replace(/[^a-z0-9]/g, '_').replace(/_+/g, '_').slice(0, 48)
+  if (type === 'movie')   return `movie__${slug}`
+  if (type === 'episode') return `ep__${slug}__s${seasonNum}e${episodeNum}`
+  if (type === 'season')  return `season__${slug}__s${seasonNum}`
+  return `unknown__${slug}`
+}
+
+/* ── Fisher-Yates shuffle (returns new array) ── */
+const shuffle = (arr) => {
+  const a = [...arr]
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[a[i], a[j]] = [a[j], a[i]]
+  }
+  return a
+}
+
+/* ── Deduplicate questions by question text ── */
+const dedupeQuestions = (questions) => {
+  const seen = new Set()
+  return questions.filter(q => {
+    const key = q.q.toLowerCase().trim()
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+/* ── localStorage helpers (offline / cold-start fallback) ── */
+const lsRead = (key) => {
+  try {
+    const raw = localStorage.getItem(LS_PREFIX + key)
+    return raw ? JSON.parse(raw) : null
+  } catch { return null }
+}
+const lsWrite = (key, data) => {
+  try { localStorage.setItem(LS_PREFIX + key, JSON.stringify(data)) } catch {}
+}
+
+/* ── Supabase pool read ── */
+const dbReadPool = async (cacheKey) => {
+  try {
+    const { data } = await supabase
+      .from('quiz_question_pool')
+      .select('questions, use_count')
+      .eq('cache_key', cacheKey)
+      .single()
+    return data || null
+  } catch { return null }
+}
+
+/* ── Supabase pool write / merge ── */
+const dbWritePool = async (cacheKey, questions) => {
+  try {
+    // Use upsert with merge — append new unique questions to existing pool
+    const existing = await dbReadPool(cacheKey)
+    const merged   = existing
+      ? dedupeQuestions([...existing.questions, ...questions])
+      : dedupeQuestions(questions)
+
+    await supabase.from('quiz_question_pool').upsert({
+      cache_key:  cacheKey,
+      questions:  merged,
+      updated_at: new Date().toISOString(),
+      use_count:  (existing?.use_count || 0),
+    }, { onConflict: 'cache_key' })
+
+    return merged
+  } catch { return questions }
+}
+
+/* ── Increment use_count in background (fire-and-forget) ── */
+const dbIncrementUse = (cacheKey) => {
+  supabase.rpc('increment_quiz_pool_use_count', { key: cacheKey }).catch(() => {})
+}
+
+/* ── Call OpenAI to generate a batch of questions ── */
+const callOpenAI = async ({ title, type, seasonNum, episodeNum, episodeName, count }) => {
   if (!OPENAI_KEY) throw new Error('No OpenAI API key configured. Add VITE_OPENAI_API_KEY to your .env file.')
 
   const context =
@@ -68,24 +184,28 @@ const generateQuiz = async ({ title, type, seasonNum, episodeNum, episodeName, c
         : `Season ${seasonNum} of "${title}"`
 
   const prompt = type === 'season'
-    ? `Generate ${count} multiple-choice quiz questions testing deep knowledge of ${context}. 
+    ? `Generate ${count} multiple-choice quiz questions testing deep knowledge of ${context}.
        Cover different aspects: plot arcs, character development, episode-specific events, themes, and notable moments across the season.
-       Make questions challenging — a person who actually watched the season should get 80%+.`
+       Make questions challenging — a person who actually watched the season should get 80%+.
+       Avoid repeating questions; make each one distinct in topic and phrasing.`
     : type === 'episode'
       ? `Generate ${count} multiple-choice questions about ${context}.
-         Focus on specific plot events, dialogue, and character actions that only someone who watched this episode would know.`
+         Focus on specific plot events, dialogue, and character actions that only someone who watched this episode would know.
+         Each question must cover a different scene or moment.`
       : `Generate ${count} multiple-choice questions about ${context}.
-         Mix easy (40%), medium (40%), and hard (20%) questions covering plot, characters, themes, cinematography, and notable scenes.`
+         Mix easy (40%), medium (40%), and hard (20%) questions covering plot, characters, themes, cinematography, and notable scenes.
+         Each question must cover a distinct aspect of the film — no overlap.`
 
   const systemPrompt = `You are a film and TV quiz generator for a cinema app called Flik'd.
-Return ONLY a valid JSON array with no markdown, no explanation.
-Each question object must have exactly:
-  "q": string (the question),
-  "opts": string[] (exactly 4 options, labeled A/B/C/D internally but stored without labels),
-  "answer": number (0-indexed correct answer index),
-  "difficulty": "easy"|"medium"|"hard"
+Return ONLY a valid JSON array with no markdown, no explanation, no code fences.
+Each question object must have exactly these fields:
+  "q": string (the question text),
+  "opts": string[] (exactly 4 answer options — do NOT include A/B/C/D labels),
+  "answer": number (0-indexed index of the correct option in opts),
+  "difficulty": "easy" | "medium" | "hard"
 
-Example: [{"q":"What color was the door?","opts":["Red","Blue","Green","Yellow"],"answer":1,"difficulty":"easy"}]`
+Example output:
+[{"q":"What was the name of the sled?","opts":["Rosebud","Citizen","Kane","Charlie"],"answer":0,"difficulty":"easy"}]`
 
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -94,9 +214,9 @@ Example: [{"q":"What color was the door?","opts":["Red","Blue","Green","Yellow"]
       Authorization: `Bearer ${OPENAI_KEY}`,
     },
     body: JSON.stringify({
-      model: 'gpt-4o-mini',
-      temperature: 0.8,
-      max_tokens: 2000,
+      model:       'gpt-4o-mini',
+      temperature: 0.85,
+      max_tokens:  2400,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user',   content: prompt },
@@ -112,13 +232,83 @@ Example: [{"q":"What color was the door?","opts":["Red","Blue","Green","Yellow"]
   const data = await res.json()
   const raw  = data.choices?.[0]?.message?.content?.trim() || '[]'
 
+  // Strip accidental markdown fences
+  const clean = raw.replace(/^```(?:json)?|```$/gm, '').trim()
+
   try {
-    const parsed = JSON.parse(raw)
+    const parsed = JSON.parse(clean)
     if (!Array.isArray(parsed) || parsed.length === 0) throw new Error('Empty quiz returned')
-    return parsed.slice(0, count)
+    return parsed
   } catch {
     throw new Error('Could not parse quiz questions. Please try again.')
   }
+}
+
+/* ─────────────────────────────────────────────────────
+   MAIN ENTRY POINT — replaces old generateQuiz()
+   Returns exactly `count` questions, sourced from cache
+   or freshly generated and then cached.
+   Also attaches `fromCache: bool` for UI feedback.
+───────────────────────────────────────────────────── */
+const generateQuiz = async ({ title, type, seasonNum, episodeNum, episodeName, count }) => {
+  const cacheKey = buildCacheKey({ type, title, seasonNum, episodeNum })
+
+  /* ── TIER 1: in-memory ── */
+  if (memoryCache.has(cacheKey)) {
+    const pool = memoryCache.get(cacheKey)
+    if (pool.length >= count) {
+      dbIncrementUse(cacheKey) // background stat update
+      const sampled = shuffle(pool).slice(0, count)
+      return sampled.map(q => ({ ...q, _fromCache: true }))
+    }
+  }
+
+  /* ── TIER 2: Supabase pool ── */
+  const dbRow = await dbReadPool(cacheKey)
+  if (dbRow && Array.isArray(dbRow.questions) && dbRow.questions.length >= count) {
+    const pool = dbRow.questions
+    // Warm the memory cache
+    memoryCache.set(cacheKey, pool)
+    // Also warm localStorage for offline fallback
+    lsWrite(cacheKey, pool)
+    dbIncrementUse(cacheKey)
+
+    // Background top-up: if pool is still small, silently grow it
+    if (pool.length < EXPAND_THRESHOLD) {
+      callOpenAI({ title, type, seasonNum, episodeNum, episodeName, count: TOPUP_BATCH })
+        .then(fresh => {
+          const merged = dedupeQuestions([...pool, ...fresh])
+          memoryCache.set(cacheKey, merged)
+          lsWrite(cacheKey, merged)
+          dbWritePool(cacheKey, fresh) // merges in DB too
+        })
+        .catch(() => {}) // silent — never block the user
+    }
+
+    const sampled = shuffle(pool).slice(0, count)
+    return sampled.map(q => ({ ...q, _fromCache: true }))
+  }
+
+  /* ── TIER 3: localStorage (offline / first-time cold start) ── */
+  const lsPool = lsRead(cacheKey)
+  if (lsPool && Array.isArray(lsPool) && lsPool.length >= count) {
+    memoryCache.set(cacheKey, lsPool)
+    const sampled = shuffle(lsPool).slice(0, count)
+    return sampled.map(q => ({ ...q, _fromCache: true }))
+  }
+
+  /* ── TIER 4: Generate fresh from OpenAI ── */
+  // Request more than needed so the pool has variety immediately
+  const requestCount = Math.max(count, MIN_POOL)
+  const fresh = await callOpenAI({ title, type, seasonNum, episodeNum, episodeName, count: requestCount })
+  const deduped = dedupeQuestions(fresh)
+
+  // Save to both cache tiers (fire-and-forget for DB)
+  memoryCache.set(cacheKey, deduped)
+  lsWrite(cacheKey, deduped)
+  dbWritePool(cacheKey, deduped).catch(() => {}) // non-blocking
+
+  return shuffle(deduped).slice(0, count)
 }
 
 /* ─── Cooldown check helper ────────────────────────── */
@@ -233,6 +423,7 @@ const QuizModal = ({
   const [cooldownAt,  setCooldownAt]  = useState(null)
   const [saving,      setSaving]      = useState(false)
   const [reveal,      setReveal]      = useState(false)  // animate answer reveal
+  const [fromCache,   setFromCache]   = useState(false)  // true = served from question pool
 
   /* ── Check cooldown on mount ── */
   useEffect(() => {
@@ -251,7 +442,7 @@ const QuizModal = ({
     return () => { live = false }
   }, [])
 
-  /* ── Generate questions ── */
+  /* ── Generate questions (cache-aware) ── */
   const startQuiz = useCallback(async () => {
     setPhase('loading')
     setError('')
@@ -260,7 +451,11 @@ const QuizModal = ({
         title, type, seasonNum, episodeNum, episodeName,
         count: config.count,
       })
-      setQuestions(qs)
+      // _fromCache is attached by generateQuiz when served from pool
+      const cached = qs.some(q => q._fromCache)
+      setFromCache(cached)
+      // Strip the internal flag before storing in state
+      setQuestions(qs.map(({ _fromCache: _, ...q }) => q))
       setAnswers([])
       setCurrent(0)
       setSelected(null)
@@ -475,8 +670,8 @@ const QuizModal = ({
               </div>
             </div>
             <div className='text-center'>
-              <p className='font-bebas text-lg text-white/80 tracking-wide mb-1'>Generating Your Quiz</p>
-              <p className='text-[12px] text-white/35'>AI is crafting personalized questions for <span className='text-[#D4AF37]/70'>{title}</span>…</p>
+              <p className='font-bebas text-lg text-white/80 tracking-wide mb-1'>Loading Your Quiz</p>
+              <p className='text-[12px] text-white/35'>Fetching questions for <span className='text-[#D4AF37]/70'>{title}</span>…</p>
             </div>
             {/* Animated dots */}
             <div className='flex gap-1.5'>
@@ -528,6 +723,13 @@ const QuizModal = ({
                 <div className='flex items-center gap-2'>
                   <span className='text-lg'>{config.icon}</span>
                   <span className='font-bebas text-[15px] text-white/70 tracking-wider'>{config.label}</span>
+                  {fromCache && (
+                    <div className='flex items-center gap-1 px-1.5 py-0.5 rounded-full border border-green-500/20 bg-green-500/8'
+                      title='Questions loaded from shared pool — no AI call needed'>
+                      <span className='text-[8px]'>⚡</span>
+                      <span className='text-[8px] font-black text-green-400/60 uppercase tracking-wider'>Cached</span>
+                    </div>
+                  )}
                 </div>
                 <div className='flex items-center gap-2'>
                   <span className='text-[11px] text-white/25 tabular-nums font-bold'>{current + 1} / {questions.length}</span>
