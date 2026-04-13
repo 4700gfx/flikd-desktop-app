@@ -3,10 +3,13 @@ import supabase from '../../config/SupabaseClient'
 import QuizModal, { checkQuizCooldown } from './QuizModal'
 
 /**
- * CurrentListTab + ListModal — v2 Polished
- * ─────────────────────────────────────────
- * Refined design with improved animations, feedback, and quiz triggers.
- * Quiz modal always centered regardless of trigger location.
+ * CurrentListTab + ListModal — v2 with AI Quiz Integration
+ * ─────────────────────────────────────────────────────────
+ * All "mark watched" actions now gate through QuizModal:
+ *
+ *   🎬 Movie toggle     → 5-question quiz, 60%, 1-day cooldown
+ *   📺 Episode toggle   → 2-question quiz, 50%, no cooldown
+ *   📦 Season check-all → 10-question quiz, 80%, 7-day cooldown
  */
 
 const TMDB_KEY = import.meta.env.VITE_TMDB_API_KEY
@@ -18,38 +21,43 @@ const relTime  = (iso) => {
   if (s < 3600)   return `${Math.floor(s / 60)}m ago`
   if (s < 86400)  return `${Math.floor(s / 3600)}h ago`
   if (s < 604800) return `${Math.floor(s / 86400)}d ago`
-  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  return new Date(iso).toLocaleDateString('en-US', { month:'short', day:'numeric' })
 }
 
-/* ─── Spinner ── */
-const Spin = ({ size = 16, color = '#D4AF37' }) => (
-  <svg width={size} height={size} viewBox='0 0 24 24' fill='none' style={{ animation: 'listSpin 0.8s linear infinite', flexShrink: 0 }}>
-    <circle cx='12' cy='12' r='10' stroke={color} strokeWidth='3' opacity='0.15' />
-    <path fill={color} opacity='0.8' d='M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z' />
+/* ─── Spinner ──────────────────────────────────────── */
+const Spin = ({ cls = 'w-4 h-4' }) => (
+  <svg className={`${cls} animate-spin text-[#D4AF37]`} fill='none' viewBox='0 0 24 24'>
+    <circle className='opacity-25' cx='12' cy='12' r='10' stroke='currentColor' strokeWidth='4'/>
+    <path className='opacity-75' fill='currentColor' d='M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z'/>
   </svg>
 )
 
-/* ─── Quiz badge pill ── */
-const QuizBadge = ({ type }) => {
+/* ─── Quiz lock badge (small) ──────────────────────── */
+const QuizLockBadge = ({ type }) => {
   const labels = { movie: '5Q · 60%', episode: '2Q · 50%', season: '10Q · 80%' }
   return (
-    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 3, padding: '2px 7px', borderRadius: 20, border: '1px solid rgba(212,175,55,0.25)', background: 'rgba(212,175,55,0.08)' }}>
-      <span style={{ fontSize: 8 }}>✨</span>
-      <span style={{ fontSize: 9, fontWeight: 900, color: 'rgba(212,175,55,0.7)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>{labels[type]}</span>
+    <div className='flex items-center gap-1 px-2 py-0.5 rounded-full border border-[#D4AF37]/25 bg-[#D4AF37]/8'>
+      <span className='text-[8px]'>✨</span>
+      <span className='text-[9px] font-black text-[#D4AF37]/70 uppercase tracking-wider'>{labels[type]}</span>
     </div>
   )
 }
 
-/* ─── TMDB helpers ── */
+/* ─── TMDB API helpers ─────────────────────────────── */
 const fetchShowSeasons = async (tmdbId) => {
   if (!TMDB_KEY) return []
   try {
     const r = await fetch(`https://api.themoviedb.org/3/tv/${tmdbId}?api_key=${TMDB_KEY}`)
     if (!r.ok) return []
     const d = await r.json()
-    return (d.seasons || []).filter(s => s.season_number > 0).map(s => ({
-      seasonNum: s.season_number, name: s.name, episodeCount: s.episode_count, posterPath: s.poster_path,
-    }))
+    return (d.seasons || [])
+      .filter(s => s.season_number > 0)
+      .map(s => ({
+        seasonNum:    s.season_number,
+        name:         s.name,
+        episodeCount: s.episode_count,
+        posterPath:   s.poster_path,
+      }))
   } catch { return [] }
 }
 
@@ -59,17 +67,25 @@ const fetchSeasonEps = async (tmdbId, seasonNum) => {
     const r = await fetch(`https://api.themoviedb.org/3/tv/${tmdbId}/season/${seasonNum}?api_key=${TMDB_KEY}`)
     if (!r.ok) return []
     const d = await r.json()
-    return (d.episodes || []).map(ep => ({ episodeNum: ep.episode_number, name: ep.name, overview: ep.overview, runtime: ep.runtime, stillPath: ep.still_path }))
+    return (d.episodes || []).map(ep => ({
+      episodeNum: ep.episode_number,
+      name:       ep.name,
+      overview:   ep.overview,
+      runtime:    ep.runtime,
+      stillPath:  ep.still_path,
+    }))
   } catch { return [] }
 }
 
-/* ─── Episode row ── */
+/* ─── Episode row ──────────────────────────────────── */
 const EpisodeRow = ({ ep, watched, showTitle, listItemId, seasonNum, userId, onToggle }) => {
   const [quizOpen, setQuizOpen] = useState(false)
   const [locked,   setLocked]   = useState(false)
+  const [checking, setChecking] = useState(false)
   const still = ep.stillPath ? tmdbImg(ep.stillPath, 'w300') : null
   const refId = `${listItemId}-S${seasonNum}E${ep.episodeNum}`
 
+  /* Check cooldown on mount — episodes have no cooldown so this is quick */
   useEffect(() => {
     let live = true
     if (!watched) {
@@ -80,69 +96,96 @@ const EpisodeRow = ({ ep, watched, showTitle, listItemId, seasonNum, userId, onT
     return () => { live = false }
   }, [watched, refId, userId])
 
-  const handleClick = (e) => {
+  const handleClick = async (e) => {
     e.stopPropagation()
-    if (watched) { onToggle(ep); return }
+    if (watched) {
+      // Un-watching is free (no quiz needed)
+      onToggle(ep)
+      return
+    }
+    // Open quiz
     setQuizOpen(true)
+  }
+
+  const handlePass = () => {
+    setQuizOpen(false)
+    onToggle(ep)
   }
 
   return (
     <>
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.5rem 0.75rem',
-        borderRadius: 10, transition: 'background 0.15s ease',
-        background: watched ? 'rgba(212,175,55,0.04)' : 'transparent',
-      }}
-        onMouseEnter={e => { if (!watched) e.currentTarget.style.background = 'rgba(255,255,255,0.02)' }}
-        onMouseLeave={e => { if (!watched) e.currentTarget.style.background = 'transparent' }}>
+      <div className={`flex items-center gap-3 px-3 py-2 rounded-xl transition-all group ${
+        watched ? 'bg-[#D4AF37]/5' : 'hover:bg-white/[0.025]'
+      }`}>
         {/* Thumbnail */}
         {still
-          ? <img src={still} alt={ep.name} style={{ width: 68, height: 40, objectFit: 'cover', borderRadius: 6, flexShrink: 0, filter: watched ? 'brightness(0.35)' : 'brightness(0.7)', transition: 'filter 0.2s' }} />
-          : <div style={{ width: 68, height: 40, background: '#141414', borderRadius: 6, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <svg width={14} height={14} fill='none' stroke='rgba(255,255,255,0.15)' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={1.5} d='M15 10l4.553-2.069A1 1 0 0121 8.82v6.36a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z'/></svg>
+          ? <img src={still} alt={ep.name}
+              className={`w-[72px] h-[42px] object-cover rounded-lg flex-shrink-0 transition-all ${
+                watched ? 'brightness-40' : 'brightness-70 group-hover:brightness-90'
+              }`}/>
+          : <div className='w-[72px] h-[42px] bg-[#161616] rounded-lg flex-shrink-0 flex items-center justify-center'>
+              <svg className='w-4 h-4 text-[#2A2A2A]' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+                <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={1.5}
+                  d='M15 10l4.553-2.069A1 1 0 0121 8.82v6.36a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z'/>
+              </svg>
             </div>
         }
 
         {/* Info */}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <p style={{ fontSize: 12, fontWeight: 600, lineHeight: 1.3, margin: 0, color: watched ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.75)', textDecoration: watched ? 'line-through' : 'none', textDecorationColor: 'rgba(255,255,255,0.1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            <span style={{ color: 'rgba(255,255,255,0.2)', marginRight: 4 }}>E{String(ep.episodeNum).padStart(2,'0')}</span>
+        <div className='flex-1 min-w-0'>
+          <p className={`text-[12px] font-semibold leading-tight ${
+            watched ? 'text-white/25 line-through decoration-white/10' : 'text-white/75'
+          }`}>
+            <span className='text-white/20 mr-1'>E{String(ep.episodeNum).padStart(2,'0')}</span>
             {ep.name}
           </p>
-          {ep.runtime && <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.2)', margin: '2px 0 0' }}>{ep.runtime}m</p>}
+          {ep.runtime && <p className='text-[10px] text-white/20 mt-0.5'>{ep.runtime}m</p>}
         </div>
 
-        {!watched && !locked && <QuizBadge type='episode' />}
-        {locked && !watched && <span style={{ fontSize: 9, color: 'rgba(248,113,113,0.5)', fontWeight: 700, flexShrink: 0 }}>Locked</span>}
+        {/* Quiz badge (only when not watched) */}
+        {!watched && !locked && (
+          <div className='flex-shrink-0'>
+            <QuizLockBadge type='episode' />
+          </div>
+        )}
 
-        {/* Toggle */}
-        <button onClick={handleClick} disabled={locked && !watched}
-          style={{
-            flexShrink: 0, width: 24, height: 24, borderRadius: '50%',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            cursor: locked && !watched ? 'not-allowed' : 'pointer',
-            border: watched ? 'none' : locked ? '1px solid rgba(248,113,113,0.2)' : '1px solid #2A2A2A',
-            background: watched ? '#D4AF37' : 'transparent',
-            color: watched ? '#0A0A0A' : locked ? 'rgba(248,113,113,0.25)' : 'transparent',
-            transition: 'all 0.18s ease',
-          }}
-          onMouseEnter={e => { if (!watched && !locked) { e.currentTarget.style.borderColor = 'rgba(212,175,55,0.6)'; e.currentTarget.style.color = 'rgba(212,175,55,0.7)'; e.currentTarget.style.background = 'rgba(212,175,55,0.08)' } }}
-          onMouseLeave={e => { if (!watched && !locked) { e.currentTarget.style.borderColor = '#2A2A2A'; e.currentTarget.style.color = 'transparent'; e.currentTarget.style.background = 'transparent' } }}>
-          {watched
-            ? <svg width={11} height={11} fill='currentColor' viewBox='0 0 20 20'><path fillRule='evenodd' d='M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z' clipRule='evenodd'/></svg>
-            : locked
-              ? <svg width={11} height={11} fill='none' stroke='currentColor' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z'/></svg>
-              : <svg width={11} height={11} fill='currentColor' viewBox='0 0 20 20'><path fillRule='evenodd' d='M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z' clipRule='evenodd'/></svg>
+        {/* Locked indicator */}
+        {locked && !watched && (
+          <span className='text-[9px] text-red-400/50 font-bold flex-shrink-0'>Locked</span>
+        )}
+
+        {/* Toggle button */}
+        <button onClick={handleClick} disabled={checking || locked}
+          className={`flex-shrink-0 w-6 h-6 rounded-full border flex items-center justify-center transition-all duration-200 ${
+            watched
+              ? 'bg-[#D4AF37] border-[#D4AF37] text-[#0A0A0A] hover:bg-transparent hover:text-[#D4AF37]/50'
+              : locked
+                ? 'border-red-500/25 text-red-400/25 cursor-not-allowed'
+                : 'border-[#2A2A2A] text-transparent hover:border-[#D4AF37]/60 hover:text-[#D4AF37]/60 hover:bg-[#D4AF37]/8'
+          } ${checking ? 'opacity-50' : ''}`}
+        >
+          {checking
+            ? <Spin cls='w-3 h-3'/>
+            : watched
+              ? <svg className='w-3 h-3' fill='currentColor' viewBox='0 0 20 20'><path fillRule='evenodd' d='M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z' clipRule='evenodd'/></svg>
+              : locked
+                ? <svg className='w-3 h-3' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z'/></svg>
+                : <svg className='w-3 h-3' fill='currentColor' viewBox='0 0 20 20'><path fillRule='evenodd' d='M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z' clipRule='evenodd'/></svg>
           }
         </button>
       </div>
 
+      {/* Episode Quiz */}
       {quizOpen && (
         <QuizModal
-          type='episode' title={showTitle} seasonNum={seasonNum}
-          episodeNum={ep.episodeNum} episodeName={ep.name}
-          refId={refId} userId={userId}
-          onPass={() => { setQuizOpen(false); onToggle(ep) }}
+          type='episode'
+          title={showTitle}
+          seasonNum={seasonNum}
+          episodeNum={ep.episodeNum}
+          episodeName={ep.name}
+          refId={refId}
+          userId={userId}
+          onPass={handlePass}
           onClose={() => setQuizOpen(false)}
         />
       )}
@@ -150,13 +193,14 @@ const EpisodeRow = ({ ep, watched, showTitle, listItemId, seasonNum, userId, onT
   )
 }
 
-/* ─── Season section ── */
+/* ─── Season accordion ─────────────────────────────── */
 const SeasonSection = ({ season, tvItem, watchedEps, userId, onEpisodeToggle, onSeasonComplete }) => {
-  const [open,         setOpen]         = useState(season.seasonNum === 1)
-  const [episodes,     setEpisodes]     = useState([])
-  const [loading,      setLoading]      = useState(false)
-  const [seasonQuiz,   setSeasonQuiz]   = useState(false)
+  const [open, setOpen]           = useState(season.seasonNum === 1)
+  const [episodes, setEpisodes]   = useState([])
+  const [loading, setLoading]     = useState(false)
+  const [seasonQuiz, setSeasonQuiz] = useState(false) // show season quiz
   const [checkingLock, setCheckingLock] = useState(false)
+  const [seasonLocked, setSeasonLocked] = useState(false)
   const fetched = useRef(false)
 
   const load = useCallback(async () => {
@@ -170,82 +214,123 @@ const SeasonSection = ({ season, tvItem, watchedEps, userId, onEpisodeToggle, on
 
   useEffect(() => { if (open) load() }, [open, load])
 
-  const watchedCount = episodes.filter(ep => watchedEps.has(`${season.seasonNum}-${ep.episodeNum}`)).length
+  const watchedCount = episodes.filter(ep =>
+    watchedEps.has(`${season.seasonNum}-${ep.episodeNum}`)
+  ).length
   const total = season.episodeCount
   const pct   = total ? Math.round((watchedCount / total) * 100) : 0
   const full  = pct === 100 && total > 0
 
-  const handleSeasonCheckAll = async (e) => {
-    e.stopPropagation()
+  /* Check season cooldown */
+  const checkSeasonLock = async () => {
+    const seasonRefId = `${tvItem.id}-S${season.seasonNum}-all`
     setCheckingLock(true)
     try {
-      const seasonRefId = `${tvItem.id}-S${season.seasonNum}-all`
       const { blocked } = await checkQuizCooldown(userId, seasonRefId, 'season')
-      if (!blocked) setSeasonQuiz(true)
-    } catch { setSeasonQuiz(true) }
+      setSeasonLocked(blocked)
+    } catch {}
     setCheckingLock(false)
+  }
+
+  const handleSeasonCheckAll = async (e) => {
+    e.stopPropagation()
+    await checkSeasonLock()
+    setSeasonQuiz(true)
+  }
+
+  const handleSeasonPass = () => {
+    setSeasonQuiz(false)
+    onSeasonComplete?.(season.seasonNum, episodes)
   }
 
   return (
     <>
-      <div style={{ borderRadius: 12, border: full ? '1px solid rgba(212,175,55,0.2)' : '1px solid #181818', overflow: 'hidden', transition: 'border-color 0.3s ease' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.75rem 1rem', background: '#0A0A0A', cursor: 'pointer' }}
-          onClick={() => { setOpen(p => !p); load() }}>
-          {season.posterPath
-            ? <img src={tmdbImg(season.posterPath, 'w92')} alt={season.name} style={{ width: 30, height: 44, objectFit: 'cover', borderRadius: 5, flexShrink: 0 }} />
-            : <div style={{ width: 30, height: 44, background: '#181818', borderRadius: 5, flexShrink: 0 }} />
-          }
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: full ? '#D4AF37' : 'rgba(255,255,255,0.75)' }}>{season.name}</span>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.25)', fontVariantNumeric: 'tabular-nums' }}>{watchedCount}/{total}</span>
-                {full && <span style={{ color: '#D4AF37', fontSize: 11 }}>✓</span>}
-                <svg width={12} height={12} fill='none' stroke='rgba(255,255,255,0.25)' viewBox='0 0 24 24' style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s ease' }}>
-                  <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M19 9l-7 7-7-7' />
-                </svg>
+      <div className={`rounded-xl border overflow-hidden transition-all ${
+        full ? 'border-[#D4AF37]/20' : 'border-[#181818]'
+      }`}>
+        {/* Season header */}
+        <div className='w-full flex items-center gap-3 px-4 py-3 hover:bg-[#0F0F0F] transition-colors text-left'>
+          {/* Clickable left portion to expand */}
+          <button className='flex items-center gap-3 flex-1 min-w-0 text-left'
+            onClick={() => { setOpen(p => !p); load() }}>
+            {season.posterPath
+              ? <img src={tmdbImg(season.posterPath,'w92')} alt={season.name}
+                  className='w-8 h-11 object-cover rounded-md flex-shrink-0'/>
+              : <div className='w-8 h-11 bg-[#1A1A1A] rounded-md flex-shrink-0'/>
+            }
+
+            <div className='flex-1 min-w-0'>
+              <div className='flex items-center justify-between mb-1.5'>
+                <span className={`text-[13px] font-bold ${full ? 'text-[#D4AF37]' : 'text-white/75'}`}>
+                  {season.name}
+                </span>
+                <div className='flex items-center gap-2'>
+                  <span className='text-[11px] text-white/25 tabular-nums'>{watchedCount}/{total}</span>
+                  {full && <span className='text-[#D4AF37] text-xs'>✓</span>}
+                  <svg className={`w-3.5 h-3.5 text-white/25 transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
+                    fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+                    <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M19 9l-7 7-7-7'/>
+                  </svg>
+                </div>
+              </div>
+              <div className='w-full h-1 bg-[#181818] rounded-full overflow-hidden'>
+                <div className={`h-full rounded-full transition-all duration-500 ${
+                  full ? 'bg-gradient-to-r from-[#D4AF37] to-[#E8C55B]' : 'bg-[#D4AF37]/50'
+                }`} style={{ width:`${pct}%` }}/>
               </div>
             </div>
-            <div style={{ height: 4, background: '#181818', borderRadius: 2, overflow: 'hidden' }}>
-              <div style={{ height: '100%', width: `${pct}%`, borderRadius: 2, transition: 'width 0.5s ease', background: full ? 'linear-gradient(90deg, #D4AF37, #E8C55B)' : 'rgba(212,175,55,0.5)' }} />
-            </div>
-          </div>
+          </button>
+
+          {/* Season check-all button */}
           {!full && total > 0 && (
-            <button onClick={handleSeasonCheckAll} disabled={checkingLock}
-              style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 8, border: '1px solid rgba(212,175,55,0.25)', background: 'rgba(212,175,55,0.08)', color: 'rgba(212,175,55,0.8)', fontSize: 9, fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.1em', cursor: 'pointer', transition: 'all 0.15s ease' }}
-              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(212,175,55,0.15)'; e.currentTarget.style.color = '#D4AF37' }}
-              onMouseLeave={e => { e.currentTarget.style.background = 'rgba(212,175,55,0.08)'; e.currentTarget.style.color = 'rgba(212,175,55,0.8)' }}>
-              {checkingLock ? <Spin size={10} /> : '✨'}
-              <span style={{ display: 'none' }}>Complete</span>
+            <button
+              onClick={handleSeasonCheckAll}
+              disabled={checkingLock}
+              className='flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl
+                border border-[#D4AF37]/25 bg-[#D4AF37]/8 hover:bg-[#D4AF37]/15
+                text-[#D4AF37]/80 hover:text-[#D4AF37] transition-all duration-200
+                text-[9px] font-black uppercase tracking-wider'
+              title={`Mark all ${total} episodes watched — requires 10-question season quiz`}>
+              {checkingLock ? <Spin cls='w-3 h-3'/> : '✨'}
+              <span className='hidden sm:inline'>Complete Season</span>
             </button>
           )}
         </div>
 
+        {/* Episodes list */}
         {open && (
-          <div style={{ borderTop: '1px solid #111', background: '#080808', padding: '0.375rem 0.5rem', display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <div className='border-t border-[#111] bg-[#080808] px-2 py-2 space-y-0.5'>
             {loading
-              ? <div style={{ padding: '1.25rem', display: 'flex', justifyContent: 'center' }}><Spin size={18} /></div>
+              ? <div className='py-5 flex justify-center'><Spin cls='w-5 h-5'/></div>
               : episodes.length === 0
-                ? <p style={{ padding: '1rem', textAlign: 'center', fontSize: 11, color: 'rgba(255,255,255,0.2)', margin: 0 }}>No episodes found</p>
+                ? <p className='py-4 text-center text-[11px] text-white/20'>No episodes found</p>
                 : episodes.map(ep => (
-                    <EpisodeRow key={`${season.seasonNum}-${ep.episodeNum}`}
-                      ep={ep} watched={watchedEps.has(`${season.seasonNum}-${ep.episodeNum}`)}
-                      showTitle={tvItem.title} listItemId={tvItem.id}
-                      seasonNum={season.seasonNum} userId={userId}
-                      onToggle={(ep) => onEpisodeToggle(season.seasonNum, ep)} />
+                    <EpisodeRow
+                      key={`${season.seasonNum}-${ep.episodeNum}`}
+                      ep={ep}
+                      watched={watchedEps.has(`${season.seasonNum}-${ep.episodeNum}`)}
+                      showTitle={tvItem.title}
+                      listItemId={tvItem.id}
+                      seasonNum={season.seasonNum}
+                      userId={userId}
+                      onToggle={(ep) => onEpisodeToggle(season.seasonNum, ep)}
+                    />
                   ))
             }
           </div>
         )}
       </div>
 
+      {/* Season Quiz */}
       {seasonQuiz && (
         <QuizModal
-          type='season' title={tvItem.title} seasonNum={season.seasonNum}
+          type='season'
+          title={tvItem.title}
+          seasonNum={season.seasonNum}
           posterPath={tvItem.poster_path}
           refId={`${tvItem.id}-S${season.seasonNum}-all`}
           userId={userId}
-          onPass={() => { setSeasonQuiz(false); onSeasonComplete?.(season.seasonNum, episodes) }}
+          onPass={handleSeasonPass}
           onClose={() => setSeasonQuiz(false)}
         />
       )}
@@ -253,11 +338,11 @@ const SeasonSection = ({ season, tvItem, watchedEps, userId, onEpisodeToggle, on
   )
 }
 
-/* ─── TV Card ── */
+/* ─── TV Show card ─────────────────────────────────── */
 const TVCard = ({ item, index, userId, onTVProgressChange }) => {
-  const [seasons,     setSeasons]     = useState([])
-  const [watchedEps,  setWatchedEps]  = useState(new Set())
-  const [loadingTV,   setLoadingTV]   = useState(true)
+  const [seasons, setSeasons]       = useState([])
+  const [watchedEps, setWatchedEps] = useState(new Set())
+  const [loadingTV, setLoadingTV]   = useState(true)
   const [showSeasons, setShowSeasons] = useState(false)
 
   useEffect(() => {
@@ -266,11 +351,15 @@ const TVCard = ({ item, index, userId, onTVProgressChange }) => {
       setLoadingTV(true)
       const [seas, { data: saved }] = await Promise.all([
         fetchShowSeasons(item.tmdb_id),
-        supabase.from('list_item_episodes').select('season_num, episode_num, is_watched').eq('list_item_id', item.id),
+        supabase.from('list_item_episodes').select('season_num, episode_num, is_watched')
+          .eq('list_item_id', item.id)
       ])
       if (cancelled) return
       setSeasons(seas)
-      setWatchedEps(new Set((saved || []).filter(e => e.is_watched).map(e => `${e.season_num}-${e.episode_num}`)))
+      const set = new Set(
+        (saved || []).filter(e => e.is_watched).map(e => `${e.season_num}-${e.episode_num}`)
+      )
+      setWatchedEps(set)
       setLoadingTV(false)
     }
     load()
@@ -283,100 +372,153 @@ const TVCard = ({ item, index, userId, onTVProgressChange }) => {
   const full       = pct === 100 && totalEps > 0
 
   const handleEpisodeToggle = useCallback(async (seasonNum, ep) => {
-    const key = `${seasonNum}-${ep.episodeNum}`
+    const key      = `${seasonNum}-${ep.episodeNum}`
     const nowWatch = !watchedEps.has(key)
-    setWatchedEps(prev => { const next = new Set(prev); nowWatch ? next.add(key) : next.delete(key); return next })
+    setWatchedEps(prev => {
+      const next = new Set(prev)
+      nowWatch ? next.add(key) : next.delete(key)
+      return next
+    })
     try {
-      await supabase.from('list_item_episodes').upsert({ list_item_id: item.id, season_num: seasonNum, episode_num: ep.episodeNum, episode_name: ep.name, is_watched: nowWatch, watched_at: nowWatch ? new Date().toISOString() : null }, { onConflict: 'list_item_id,season_num,episode_num' })
-      onTVProgressChange?.(item.id, nowWatch ? watchedEps.size + 1 : watchedEps.size - 1, totalEps)
-    } catch {
-      setWatchedEps(prev => { const next = new Set(prev); nowWatch ? next.delete(key) : next.add(key); return next })
+      await supabase.from('list_item_episodes').upsert({
+        list_item_id: item.id,
+        season_num:   seasonNum,
+        episode_num:  ep.episodeNum,
+        episode_name: ep.name,
+        is_watched:   nowWatch,
+        watched_at:   nowWatch ? new Date().toISOString() : null,
+      }, { onConflict: 'list_item_id,season_num,episode_num' })
+      const newCount = nowWatch ? watchedEps.size + 1 : watchedEps.size - 1
+      onTVProgressChange?.(item.id, newCount, totalEps)
+    } catch (err) {
+      setWatchedEps(prev => {
+        const next = new Set(prev)
+        nowWatch ? next.delete(key) : next.add(key)
+        return next
+      })
     }
   }, [watchedEps, item.id, totalEps, onTVProgressChange])
 
+  /* Mark ALL episodes in a season as watched (after passing season quiz) */
   const handleSeasonComplete = useCallback(async (seasonNum, episodes) => {
+    // Optimistically mark all as watched
     const keys = episodes.map(ep => `${seasonNum}-${ep.episodeNum}`)
-    setWatchedEps(prev => { const next = new Set(prev); keys.forEach(k => next.add(k)); return next })
+    setWatchedEps(prev => {
+      const next = new Set(prev)
+      keys.forEach(k => next.add(k))
+      return next
+    })
     try {
       await supabase.from('list_item_episodes').upsert(
-        episodes.map(ep => ({ list_item_id: item.id, season_num: seasonNum, episode_num: ep.episodeNum, episode_name: ep.name, is_watched: true, watched_at: new Date().toISOString() })),
+        episodes.map(ep => ({
+          list_item_id: item.id,
+          season_num:   seasonNum,
+          episode_num:  ep.episodeNum,
+          episode_name: ep.name,
+          is_watched:   true,
+          watched_at:   new Date().toISOString(),
+        })),
         { onConflict: 'list_item_id,season_num,episode_num' }
       )
+      onTVProgressChange?.(item.id, watchedEps.size + keys.length, totalEps)
     } catch {}
-  }, [item.id])
+  }, [item.id, watchedEps, totalEps, onTVProgressChange])
 
   const bg = item.backdrop_path ? tmdbImg(item.backdrop_path, 'w780') : null
   const p  = item.poster_path   ? tmdbImg(item.poster_path)           : null
 
   return (
-    <div style={{
-      gridColumn: '1 / -1', position: 'relative', borderRadius: 16, overflow: 'hidden',
-      border: full ? '1px solid rgba(212,175,55,0.25)' : '1px solid #1C1C1C',
-      background: full ? 'rgba(212,175,55,0.03)' : '#0D0D0D',
-      transition: 'border-color 0.3s, background 0.3s',
-      animation: `cardSlideIn 0.3s ease-out ${Math.min(index * 0.05, 0.4)}s both`,
-    }}>
+    <div
+      className={`col-span-2 relative rounded-2xl border overflow-hidden transition-all duration-300 ${
+        full ? 'border-[#D4AF37]/25 bg-[#D4AF37]/[0.04]' : 'border-[#1C1C1C] bg-[#0D0D0D]'
+      }`}
+      style={{ animation: `cardIn 0.3s ease-out ${Math.min(index * 0.04, 0.4)}s both` }}
+    >
       {bg && (
-        <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden' }}>
-          <img src={bg} alt='' style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.06, transform: 'scale(1.05)' }} />
-          <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(90deg, #0D0D0D 30%, rgba(13,13,13,0.4) 100%)' }} />
+        <div className='absolute inset-0 pointer-events-none overflow-hidden'>
+          <img src={bg} alt='' className='w-full h-full object-cover opacity-[0.06] scale-105'/>
+          <div className='absolute inset-0 bg-gradient-to-r from-[#0D0D0D] via-[#0D0D0D]/60 to-transparent'/>
         </div>
       )}
 
-      <div style={{ position: 'relative' }}>
-        <div style={{ display: 'flex', gap: '1rem', padding: '1.25rem' }}>
+      <div className='relative'>
+        <div className='flex gap-4 p-5'>
           {p
-            ? <img src={p} alt={item.title} style={{ width: 64, height: 94, objectFit: 'cover', borderRadius: 10, flexShrink: 0, boxShadow: '0 8px 24px rgba(0,0,0,0.5)', border: '1px solid rgba(255,255,255,0.05)' }} />
-            : <div style={{ width: 64, height: 94, background: '#1A1A1A', borderRadius: 10, flexShrink: 0 }} />
+            ? <img src={p} alt={item.title}
+                className='w-[68px] h-[100px] object-cover rounded-xl flex-shrink-0 shadow-2xl ring-1 ring-white/5'/>
+            : <div className='w-[68px] h-[100px] bg-[#1A1A1A] rounded-xl flex-shrink-0 ring-1 ring-white/5'/>
           }
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: 4 }}>
-              <span style={{ fontSize: 10, fontWeight: 900, color: 'rgba(212,175,55,0.5)', textTransform: 'uppercase', letterSpacing: '0.15em' }}>📺 Series</span>
-              {full && <span style={{ fontSize: 10, fontWeight: 900, color: '#D4AF37', textTransform: 'uppercase', letterSpacing: '0.15em' }}>Complete ✓</span>}
+
+          <div className='flex-1 min-w-0'>
+            <div className='flex items-center gap-2 mb-1 flex-wrap'>
+              <span className='text-[10px] font-black text-[#D4AF37]/50 uppercase tracking-widest'>📺 Series</span>
+              {full && <span className='text-[10px] font-black text-[#D4AF37] uppercase tracking-widest'>Complete ✓</span>}
             </div>
-            <h4 style={{ fontWeight: 700, fontSize: 15, color: '#fff', lineHeight: 1.3, margin: '0 0 0.75rem' }}>{item.title}</h4>
+            <h4 className='font-bold text-[16px] text-white leading-snug mb-3'>{item.title}</h4>
+
             {loadingTV
-              ? <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Spin size={13} /><span style={{ fontSize: 11, color: 'rgba(255,255,255,0.25)' }}>Loading…</span></div>
+              ? <div className='flex items-center gap-2'><Spin cls='w-3.5 h-3.5'/><span className='text-[11px] text-white/25'>Loading episodes…</span></div>
               : (
                 <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 6 }}>
-                    <span style={{ color: 'rgba(255,255,255,0.3)' }}>
-                      <span style={{ color: '#fff', fontWeight: 600 }}>{watchedCnt}</span> / {totalEps} episodes
+                  <div className='flex justify-between text-[11px] mb-1.5'>
+                    <span className='text-white/35'>
+                      <span className='text-white font-semibold'>{watchedCnt}</span>
+                      <span className='text-white/30'> / {totalEps} episodes watched</span>
                     </span>
-                    <span style={{ fontWeight: 700, color: full ? '#D4AF37' : 'rgba(255,255,255,0.3)', fontVariantNumeric: 'tabular-nums' }}>{pct}%</span>
+                    <span className={`font-bold tabular-nums ${full ? 'text-[#D4AF37]' : 'text-white/30'}`}>{pct}%</span>
                   </div>
-                  <div style={{ height: 6, background: '#161616', borderRadius: 3, overflow: 'hidden' }}>
-                    <div style={{ height: '100%', width: `${pct}%`, borderRadius: 3, transition: 'width 0.5s ease', background: full ? 'linear-gradient(90deg, #D4AF37, #E8C55B)' : 'linear-gradient(90deg, rgba(212,175,55,0.55), rgba(212,175,55,0.75))', boxShadow: full ? '0 0 8px rgba(212,175,55,0.35)' : 'none' }} />
+                  <div className='w-full h-2 bg-[#161616] rounded-full overflow-hidden'>
+                    <div className={`h-full rounded-full transition-all duration-500 ${
+                      full
+                        ? 'bg-gradient-to-r from-[#D4AF37] to-[#E8C55B] shadow-[0_0_8px_rgba(212,175,55,0.35)]'
+                        : 'bg-gradient-to-r from-[#D4AF37]/55 to-[#D4AF37]/75'
+                    }`} style={{ width:`${pct}%` }}/>
                   </div>
-                  <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.2)', margin: '5px 0 0' }}>{seasons.length} season{seasons.length !== 1 ? 's' : ''}</p>
+                  <p className='text-[11px] text-white/20 mt-1.5'>{seasons.length} season{seasons.length !== 1 ? 's' : ''}</p>
                 </div>
               )
             }
           </div>
         </div>
 
-        {/* Toggle seasons */}
+        {/* Season quiz note */}
+        {!loadingTV && !full && (
+          <div className='px-5 pb-3 flex items-center gap-2'>
+            <QuizLockBadge type='episode' />
+            <span className='text-[9px] text-white/20'>Episode check · </span>
+            <QuizLockBadge type='season' />
+            <span className='text-[9px] text-white/20'>Season check-all</span>
+          </div>
+        )}
+
+        {/* Toggle seasons button */}
         {!loadingTV && seasons.length > 0 && (
-          <button onClick={() => setShowSeasons(p => !p)}
-            style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.625rem 1.25rem', borderTop: '1px solid #141414', background: 'transparent', border: 'none', borderTop: '1px solid #141414', cursor: 'pointer', transition: 'background 0.15s' }}
-            onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.02)'}
-            onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
-              {showSeasons ? 'Hide episodes' : 'Browse episodes by season'}
+          <button
+            onClick={() => setShowSeasons(p => !p)}
+            className='w-full flex items-center justify-between px-5 py-2.5 border-t border-[#141414] hover:bg-[#0F0F0F] transition-colors'
+          >
+            <span className='text-[11px] font-bold text-white/35 uppercase tracking-wider'>
+              {showSeasons ? 'Hide episodes' : 'Show episodes by season'}
             </span>
-            <svg width={14} height={14} fill='none' stroke='rgba(255,255,255,0.25)' viewBox='0 0 24 24' style={{ transform: showSeasons ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s ease' }}>
-              <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M19 9l-7 7-7-7' />
+            <svg className={`w-4 h-4 text-white/25 transition-transform duration-200 ${showSeasons ? 'rotate-180' : ''}`}
+              fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+              <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M19 9l-7 7-7-7'/>
             </svg>
           </button>
         )}
 
         {showSeasons && !loadingTV && (
-          <div style={{ padding: '0.75rem 1rem', borderTop: '1px solid #111', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+          <div className='px-4 pb-4 pt-3 space-y-2 border-t border-[#111]'>
             {seasons.map(s => (
-              <SeasonSection key={s.seasonNum} season={s} tvItem={item}
-                watchedEps={watchedEps} userId={userId}
+              <SeasonSection
+                key={s.seasonNum}
+                season={s}
+                tvItem={item}
+                watchedEps={watchedEps}
+                userId={userId}
                 onEpisodeToggle={handleEpisodeToggle}
-                onSeasonComplete={handleSeasonComplete} />
+                onSeasonComplete={handleSeasonComplete}
+              />
             ))}
           </div>
         )}
@@ -385,15 +527,17 @@ const TVCard = ({ item, index, userId, onTVProgressChange }) => {
   )
 }
 
-/* ─── Movie Card ── */
+/* ─── Movie card ───────────────────────────────────── */
 const MovieCard = ({ item, index, userId, onToggle }) => {
-  const [quizOpen, setQuizOpen] = useState(false)
-  const [locked,   setLocked]   = useState(false)
-  const [checking, setChecking] = useState(false)
-  const [expanded, setExpanded] = useState(false)
+  const [quizOpen,  setQuizOpen]  = useState(false)
+  const [locked,    setLocked]    = useState(false)
+  const [checking,  setChecking]  = useState(false)
+  const [expanded,  setExpanded]  = useState(false)
   const p  = item.poster_path   ? tmdbImg(item.poster_path)           : null
   const bg = item.backdrop_path ? tmdbImg(item.backdrop_path, 'w780') : null
+  const hasMore = item.overview && item.overview.length > 100
 
+  /* Check cooldown on mount */
   useEffect(() => {
     let live = true
     if (!item.is_completed) {
@@ -406,104 +550,129 @@ const MovieCard = ({ item, index, userId, onToggle }) => {
 
   const handleToggle = async (e) => {
     e.stopPropagation()
-    if (item.is_completed) { onToggle(item); return }
+    if (item.is_completed) {
+      // Un-watching doesn't need a quiz
+      onToggle(item)
+      return
+    }
+    // Check cooldown fresh before opening
     setChecking(true)
     try {
       const { blocked } = await checkQuizCooldown(userId, item.id, 'movie')
       setLocked(blocked)
       if (!blocked) setQuizOpen(true)
-    } catch { setQuizOpen(true) }
+    } catch {
+      setQuizOpen(true)
+    }
     setChecking(false)
+  }
+
+  const handlePass = () => {
+    setQuizOpen(false)
+    onToggle(item)
   }
 
   return (
     <>
-      <div style={{
-        position: 'relative', borderRadius: 16, overflow: 'hidden',
-        display: 'flex', flexDirection: 'column',
-        border: item.is_completed ? '1px solid rgba(212,175,55,0.2)' : locked ? '1px solid rgba(248,113,113,0.12)' : '1px solid #1C1C1C',
-        background: item.is_completed ? 'rgba(212,175,55,0.03)' : '#0D0D0D',
-        transition: 'all 0.25s ease',
-        animation: `cardSlideIn 0.3s ease-out ${Math.min(index * 0.05, 0.4)}s both`,
-      }}>
-        {/* Backdrop */}
-        <div style={{ position: 'relative', height: 76, overflow: 'hidden', background: '#111', flexShrink: 0 }}>
-          {bg && <img src={bg} alt='' style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: item.is_completed ? 0.12 : 0.22, transition: 'opacity 0.2s' }} />}
-          <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to bottom, transparent, #0D0D0D)' }} />
-
-          {/* Index badge */}
-          <div style={{ position: 'absolute', top: 8, left: 8, width: 20, height: 20, borderRadius: '50%', background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <span style={{ fontSize: 9, fontWeight: 700, color: 'rgba(255,255,255,0.4)' }}>{index + 1}</span>
+      <div
+        className={`relative rounded-2xl border overflow-hidden flex flex-col transition-all duration-300 ${
+          item.is_completed
+            ? 'border-[#D4AF37]/20 bg-[#D4AF37]/[0.04]'
+            : locked
+              ? 'border-red-500/15 bg-[#0D0D0D]'
+              : 'border-[#1C1C1C] bg-[#0D0D0D] hover:border-[#252525]'
+        }`}
+        style={{ animation:`cardIn 0.3s ease-out ${Math.min(index * 0.04, 0.4)}s both` }}
+      >
+        {/* Backdrop strip */}
+        <div className='relative h-[80px] flex-shrink-0 overflow-hidden bg-[#111]'>
+          {bg
+            ? <img src={bg} alt='' className={`w-full h-full object-cover transition-all ${
+                item.is_completed ? 'opacity-15' : 'opacity-25 hover:opacity-35'
+              }`}/>
+            : <div className='w-full h-full bg-gradient-to-br from-[#161616] to-[#0D0D0D]'/>
+          }
+          <div className='absolute inset-0 bg-gradient-to-b from-transparent to-[#0D0D0D]'/>
+          <div className='absolute top-2 left-2 w-5 h-5 rounded-full bg-black/60 flex items-center justify-center'>
+            <span className='text-[9px] font-bold text-white/40'>{index + 1}</span>
           </div>
 
           {/* Watch toggle */}
           <button onClick={handleToggle} disabled={checking}
-            style={{
-              position: 'absolute', top: 8, right: 8, width: 28, height: 28, borderRadius: '50%',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: checking ? 'wait' : 'pointer',
-              background: item.is_completed ? '#D4AF37' : 'rgba(0,0,0,0.55)',
-              border: item.is_completed ? 'none' : locked ? '1px solid rgba(248,113,113,0.25)' : '1px solid rgba(212,175,55,0.3)',
-              color: item.is_completed ? '#0A0A0A' : locked ? 'rgba(248,113,113,0.5)' : 'rgba(212,175,55,0.7)',
-              transition: 'all 0.18s ease',
-              boxShadow: item.is_completed ? '0 4px 12px rgba(212,175,55,0.25)' : 'none',
-            }}
-            onMouseEnter={e => { if (!item.is_completed && !locked && !checking) { e.currentTarget.style.background = 'rgba(212,175,55,0.15)'; e.currentTarget.style.borderColor = '#D4AF37'; e.currentTarget.style.transform = 'scale(1.1)' } }}
-            onMouseLeave={e => { if (!item.is_completed && !locked) { e.currentTarget.style.background = 'rgba(0,0,0,0.55)'; e.currentTarget.style.borderColor = 'rgba(212,175,55,0.3)'; e.currentTarget.style.transform = 'none' } }}>
-            {checking ? <Spin size={13} color={item.is_completed ? '#0A0A0A' : '#D4AF37'} />
-              : item.is_completed ? <svg width={13} height={13} fill='currentColor' viewBox='0 0 20 20'><path fillRule='evenodd' d='M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z' clipRule='evenodd'/></svg>
-              : locked ? <svg width={12} height={12} fill='none' stroke='currentColor' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z'/></svg>
-              : <span style={{ fontSize: 10 }}>✨</span>
+            className={`absolute top-2 right-2 w-7 h-7 rounded-full border flex items-center justify-center transition-all duration-200 ${
+              item.is_completed
+                ? 'bg-[#D4AF37] border-[#D4AF37] text-[#0A0A0A] shadow-lg shadow-[#D4AF37]/20 hover:shadow-[#D4AF37]/30'
+                : locked
+                  ? 'bg-black/50 border-red-500/25 text-red-400/40 cursor-not-allowed'
+                  : 'bg-black/50 border-[#D4AF37]/30 text-[#D4AF37]/60 hover:border-[#D4AF37] hover:text-[#D4AF37] hover:bg-[#D4AF37]/15'
+            } ${checking ? 'opacity-50' : ''}`}
+          >
+            {checking
+              ? <Spin cls='w-3 h-3'/>
+              : item.is_completed
+                ? <svg className='w-3.5 h-3.5' fill='currentColor' viewBox='0 0 20 20'><path fillRule='evenodd' d='M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z' clipRule='evenodd'/></svg>
+                : locked
+                  ? <svg className='w-3.5 h-3.5' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z'/></svg>
+                  : <span className='text-[9px] font-black leading-none'>✨</span>
             }
           </button>
 
-          {/* Quiz badge / lock on backdrop */}
+          {/* Quiz badge on the backdrop */}
           {!item.is_completed && !locked && (
-            <div style={{ position: 'absolute', bottom: 8, right: 8 }}><QuizBadge type='movie' /></div>
+            <div className='absolute bottom-2 right-2'>
+              <QuizLockBadge type='movie' />
+            </div>
           )}
           {locked && !item.is_completed && (
-            <div style={{ position: 'absolute', bottom: 8, right: 8, display: 'flex', alignItems: 'center', gap: 3, padding: '2px 7px', borderRadius: 20, background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.2)' }}>
-              <span style={{ fontSize: 8, color: 'rgba(248,113,113,0.6)', fontWeight: 700 }}>⏳ Locked</span>
+            <div className='absolute bottom-2 right-2 flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-500/10 border border-red-500/20'>
+              <span className='text-[8px] text-red-400/60 font-bold'>⏳ Locked</span>
             </div>
           )}
         </div>
 
         {/* Body */}
-        <div style={{ display: 'flex', gap: '0.75rem', padding: '0 0.75rem 0.75rem', flex: 1 }}>
-          <div style={{ flexShrink: 0, marginTop: -28, zIndex: 1 }}>
+        <div className='flex gap-3 px-3 py-3 flex-1'>
+          <div className='flex-shrink-0 -mt-10 z-10'>
             {p
-              ? <div style={{ position: 'relative' }}>
-                  <img src={p} alt={item.title} style={{ width: 50, height: 72, objectFit: 'cover', borderRadius: 8, boxShadow: '0 8px 20px rgba(0,0,0,0.5)', border: '1px solid rgba(255,255,255,0.06)', filter: item.is_completed ? 'brightness(0.45)' : 'none', transition: 'filter 0.2s' }} />
+              ? <div className='relative'>
+                  <img src={p} alt={item.title}
+                    className={`w-[52px] h-[76px] object-cover rounded-lg shadow-xl ring-1 transition-all ${
+                      item.is_completed ? 'ring-[#D4AF37]/25 brightness-50' : 'ring-white/10'
+                    }`}/>
                   {item.is_completed && (
-                    <div style={{ position: 'absolute', inset: 0, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <div style={{ width: 22, height: 22, borderRadius: '50%', background: 'rgba(212,175,55,0.9)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <svg width={11} height={11} fill='#0A0A0A' viewBox='0 0 20 20'><path fillRule='evenodd' d='M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z' clipRule='evenodd'/></svg>
-                      </div>
+                    <div className='absolute inset-0 rounded-lg flex items-center justify-center'>
+                      <svg className='w-5 h-5 text-[#D4AF37]' fill='currentColor' viewBox='0 0 20 20'>
+                        <path fillRule='evenodd' d='M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z' clipRule='evenodd'/>
+                      </svg>
                     </div>
                   )}
                 </div>
-              : <div style={{ width: 50, height: 72, background: '#1A1A1A', borderRadius: 8, marginTop: -28 }} />
+              : <div className='w-[52px] h-[76px] bg-[#1A1A1A] rounded-lg ring-1 ring-white/5'/>
             }
           </div>
 
-          <div style={{ flex: 1, minWidth: 0, paddingTop: '0.25rem' }}>
-            <h4 style={{ fontWeight: 700, fontSize: 13, lineHeight: 1.3, margin: '0 0 3px', color: item.is_completed ? 'rgba(255,255,255,0.28)' : '#fff', textDecoration: item.is_completed ? 'line-through' : 'none', textDecorationColor: 'rgba(255,255,255,0.12)' }}>
+          <div className='flex-1 min-w-0'>
+            <h4 className={`font-bold text-[13px] leading-snug mb-1 transition-colors ${
+              item.is_completed ? 'text-white/30 line-through decoration-white/15' : 'text-white'
+            }`}>
               {item.title}
             </h4>
-            <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.22)', marginBottom: 6 }}>
+            <div className='text-[10px] text-white/25 mb-2 leading-relaxed'>
               {item.added_at && <span>Added {relTime(item.added_at)}</span>}
-              {item.is_completed && item.completed_at && <span style={{ color: 'rgba(212,175,55,0.4)', marginLeft: 4 }}>· Watched {relTime(item.completed_at)}</span>}
+              {item.is_completed && item.completed_at &&
+                <span className='text-[#D4AF37]/45 ml-1'>· Watched {relTime(item.completed_at)}</span>
+              }
             </div>
 
             {item.overview && (
               <div>
-                <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.32)', lineHeight: 1.5, margin: 0, display: expanded ? 'block' : '-webkit-box', WebkitLineClamp: expanded ? 'unset' : 2, WebkitBoxOrient: 'vertical', overflow: expanded ? 'visible' : 'hidden' }}>
+                <p className={`text-[11px] text-white/35 leading-relaxed ${expanded ? '' : 'line-clamp-2'}`}>
                   {item.overview}
                 </p>
-                {item.overview.length > 100 && (
-                  <button onClick={e => { e.stopPropagation(); setExpanded(p => !p) }}
-                    style={{ fontSize: 10, color: 'rgba(212,175,55,0.45)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 0', transition: 'color 0.15s' }}
-                    onMouseEnter={e => e.currentTarget.style.color = '#D4AF37'}
-                    onMouseLeave={e => e.currentTarget.style.color = 'rgba(212,175,55,0.45)'}>
+                {hasMore && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setExpanded(p => !p) }}
+                    className='text-[10px] text-[#D4AF37]/45 hover:text-[#D4AF37] mt-0.5 transition-colors'>
                     {expanded ? '↑ Less' : '↓ More'}
                   </button>
                 )}
@@ -511,20 +680,24 @@ const MovieCard = ({ item, index, userId, onToggle }) => {
             )}
 
             {item.quiz_score != null && (
-              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 7px', borderRadius: 6, background: '#181818', border: '1px solid #222', marginTop: 6 }}>
-                <span style={{ fontSize: 10, color: '#D4AF37' }}>✨</span>
-                <span style={{ fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.45)' }}>Quiz {item.quiz_score}%</span>
+              <div className='inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#181818] border border-[#222] mt-2'>
+                <span className='text-[#D4AF37] text-xs'>✨</span>
+                <span className='text-[10px] font-bold text-white/50'>Quiz {item.quiz_score}%</span>
               </div>
             )}
           </div>
         </div>
       </div>
 
+      {/* Movie Quiz */}
       {quizOpen && (
         <QuizModal
-          type='movie' title={item.title} posterPath={item.poster_path}
-          refId={item.id} userId={userId}
-          onPass={() => { setQuizOpen(false); onToggle(item) }}
+          type='movie'
+          title={item.title}
+          posterPath={item.poster_path}
+          refId={item.id}
+          userId={userId}
+          onPass={handlePass}
           onClose={() => setQuizOpen(false)}
         />
       )}
@@ -532,7 +705,7 @@ const MovieCard = ({ item, index, userId, onToggle }) => {
   )
 }
 
-/* ─── List Detail Modal ── */
+/* ─── List Detail Modal ────────────────────────────── */
 const ListModal = ({ list, userId, onClose, onCountChange }) => {
   const [items,   setItems]   = useState([])
   const [loading, setLoading] = useState(true)
@@ -544,11 +717,18 @@ const ListModal = ({ list, userId, onClose, onCountChange }) => {
     const load = async () => {
       setLoading(true); setError(null)
       try {
-        const { data, error } = await supabase.from('list_items').select('*').eq('list_id', list.id).order('position', { ascending: true, nullsFirst: false }).order('added_at', { ascending: true })
+        const { data, error } = await supabase
+          .from('list_items').select('*')
+          .eq('list_id', list.id)
+          .order('position', { ascending:true, nullsFirst:false })
+          .order('added_at',  { ascending:true })
         if (error) throw error
         if (!cancelled) setItems(data || [])
-      } catch { if (!cancelled) setError('Could not load items. Please try again.') }
-      finally { if (!cancelled) setLoading(false) }
+      } catch {
+        if (!cancelled) setError('Could not load items. Please try again.')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
     }
     load()
     return () => { cancelled = true }
@@ -557,149 +737,207 @@ const ListModal = ({ list, userId, onClose, onCountChange }) => {
   const handleMovieToggle = useCallback(async (item) => {
     const newDone = !item.is_completed
     const doneAt  = newDone ? new Date().toISOString() : null
-    setItems(prev => prev.map(i => i.id === item.id ? { ...i, is_completed: newDone, completed_at: doneAt } : i))
+    setItems(prev => prev.map(i => i.id === item.id ? {...i, is_completed:newDone, completed_at:doneAt} : i))
     try {
-      await supabase.from('list_items').update({ is_completed: newDone, completed_at: doneAt }).eq('id', item.id)
-      setItems(cur => { onCountChange?.(list.id, cur.filter(i => i.is_completed).length, cur.length); return cur })
-    } catch { setItems(prev => prev.map(i => i.id === item.id ? item : i)) }
+      await supabase.from('list_items').update({ is_completed:newDone, completed_at:doneAt }).eq('id', item.id)
+      setItems(cur => {
+        onCountChange?.(list.id, cur.filter(i => i.is_completed).length, cur.length)
+        return cur
+      })
+    } catch {
+      setItems(prev => prev.map(i => i.id === item.id ? item : i))
+    }
   }, [list.id, onCountChange])
 
-  const movies      = items.filter(i => i.media_type !== 'tv')
-  const shows       = items.filter(i => i.media_type === 'tv')
-  const moviesDone  = movies.filter(i => i.is_completed).length
-  const pct         = movies.length ? Math.round((moviesDone / movies.length) * 100) : 0
+  const handleTVProgress = useCallback(() => {
+    setItems(cur => {
+      onCountChange?.(list.id, cur.filter(i => i.is_completed).length, cur.length)
+      return cur
+    })
+  }, [list.id, onCountChange])
 
-  const filtMovies = filter === 'watched' ? movies.filter(i => i.is_completed) : filter === 'unwatched' ? movies.filter(i => !i.is_completed) : movies
-  const filtShows  = filter === 'watched' ? [] : shows
+  const movies = items.filter(i => i.media_type !== 'tv')
+  const shows  = items.filter(i => i.media_type === 'tv')
+  const moviesDone = movies.filter(i => i.is_completed).length
+  const pct = movies.length ? Math.round((moviesDone / movies.length) * 100) : 0
+
+  const filtMovies = filter === 'watched'   ? movies.filter(i =>  i.is_completed)
+                   : filter === 'unwatched' ? movies.filter(i => !i.is_completed)
+                   : movies
+  const filtShows  = filter === 'watched'   ? []
+                   : filter === 'unwatched' ? shows
+                   : shows
 
   return (
-    <div onClick={e => e.target === e.currentTarget && onClose()}
-      style={{ position: 'fixed', inset: 0, zIndex: 8000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem', background: 'rgba(0,0,0,0.88)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', animation: 'listOverlayIn 0.2s ease-out' }}>
-      <div style={{ background: '#080808', border: '1px solid #1C1C1C', borderRadius: 24, width: '100%', maxWidth: 860, maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxShadow: '0 40px 100px rgba(0,0,0,0.9)', animation: 'listModalIn 0.28s cubic-bezier(0.34,1.56,0.64,1)', overflow: 'hidden' }}>
-        {/* Gold bar */}
-        <div style={{ height: 2, flexShrink: 0, background: 'linear-gradient(90deg, transparent, #D4AF37 20%, #F0C93A 50%, #D4AF37 80%, transparent)' }} />
+    <div className='fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-md'
+      onClick={e => e.target === e.currentTarget && onClose()}
+      style={{ animation:'overlayIn 0.2s ease-out' }}>
+
+      <div className='bg-[#080808] border border-[#1C1C1C] rounded-3xl w-full max-w-4xl max-h-[92vh] flex flex-col shadow-[0_40px_100px_rgba(0,0,0,0.9)]'
+        style={{ animation:'modalIn 0.25s cubic-bezier(0.34,1.56,0.64,1)' }}>
+
+        {/* Gold top bar */}
+        <div className='h-[2px] flex-shrink-0 rounded-t-3xl overflow-hidden'>
+          <div className='h-full' style={{ background: 'linear-gradient(90deg, transparent, #D4AF37 25%, #F0C93A 50%, #D4AF37 75%, transparent)' }} />
+        </div>
 
         {/* Header */}
-        <div style={{ padding: '1.5rem 1.75rem 0', flexShrink: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', marginBottom: '1.25rem' }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: 4 }}>
-                <h2 style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 28, color: '#fff', letterSpacing: '0.04em', margin: 0, lineHeight: 1 }}>{list.name}</h2>
-                {list.isPublic && <span style={{ padding: '2px 8px', background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.2)', color: 'rgba(96,165,250,0.9)', fontSize: 9, fontWeight: 900, borderRadius: 20, textTransform: 'uppercase', letterSpacing: '0.15em' }}>Public</span>}
+        <div className='px-7 pt-7 pb-0 flex-shrink-0'>
+          <div className='flex items-start justify-between gap-4 mb-5'>
+            <div className='flex-1 min-w-0'>
+              <div className='flex items-center gap-3 mb-1'>
+                <h2 className='font-bebas text-3xl text-white tracking-wide leading-none'>{list.name}</h2>
+                {list.isPublic && (
+                  <span className='px-2 py-0.5 bg-blue-500/10 border border-blue-500/20 text-blue-400 text-[10px] font-black rounded-full uppercase tracking-widest'>Public</span>
+                )}
               </div>
-              {list.description && <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.3)', margin: '0 0 8px' }}>{list.description}</p>}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <span style={{ fontSize: 14 }}>✨</span>
-                <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.28)', margin: 0 }}>Watching is AI-verified — films need 60%, episodes 50%, full seasons 80%</p>
+              {list.description && <p className='text-white/30 text-sm'>{list.description}</p>}
+
+              {/* AI quiz notice */}
+              <div className='flex items-center gap-2 mt-2'>
+                <span className='text-base'>✨</span>
+                <p className='text-[11px] text-white/30'>
+                  Watching is verified by AI quiz — films need 60%, episodes 50%, full seasons 80%
+                </p>
               </div>
             </div>
             <button onClick={onClose}
-              style={{ width: 36, height: 36, borderRadius: 10, border: 'none', background: 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'rgba(255,255,255,0.2)', transition: 'all 0.18s ease', flexShrink: 0 }}
-              onMouseEnter={e => { e.currentTarget.style.color = '#fff'; e.currentTarget.style.background = '#181818'; e.currentTarget.style.transform = 'rotate(90deg)' }}
-              onMouseLeave={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.2)'; e.currentTarget.style.background = 'transparent'; e.currentTarget.style.transform = 'none' }}>
-              <svg width={18} height={18} fill='none' stroke='currentColor' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M6 18L18 6M6 6l12 12'/></svg>
+              className='w-9 h-9 flex items-center justify-center rounded-xl text-white/20 hover:text-white hover:bg-[#181818] transition-all flex-shrink-0 hover:rotate-90 duration-200'>
+              <svg className='w-5 h-5' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+                <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M6 18L18 6M6 6l12 12'/>
+              </svg>
             </button>
           </div>
 
-          {/* Progress */}
+          {/* Stats + progress */}
           {!loading && items.length > 0 && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem', marginBottom: '1.25rem' }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6 }}>
-                  <span style={{ color: 'rgba(255,255,255,0.3)' }}>
-                    <span style={{ color: '#fff', fontWeight: 600 }}>{moviesDone}</span> / {movies.length} films watched
-                    {shows.length > 0 && <span style={{ marginLeft: 8, color: 'rgba(255,255,255,0.2)' }}>· {shows.length} show{shows.length > 1 ? 's' : ''}</span>}
+            <div className='flex items-center gap-5 mb-5'>
+              <div className='flex-1'>
+                <div className='flex justify-between text-xs mb-1.5'>
+                  <span className='text-white/30'>
+                    <span className='text-white font-semibold'>{moviesDone}</span> / {movies.length} films watched
+                    {shows.length > 0 && <span className='ml-2 text-white/20'>· {shows.length} show{shows.length>1?'s':''} with episode tracking</span>}
                   </span>
-                  <span style={{ fontWeight: 700, color: 'rgba(255,255,255,0.35)', fontVariantNumeric: 'tabular-nums' }}>{pct}%</span>
+                  <span className='text-white/35 font-bold tabular-nums'>{pct}%</span>
                 </div>
-                <div style={{ height: 5, background: '#161616', borderRadius: 3, overflow: 'hidden' }}>
-                  <div style={{ height: '100%', width: `${pct}%`, borderRadius: 3, background: 'linear-gradient(90deg, rgba(212,175,55,0.6), #D4AF37)', transition: 'width 0.6s ease' }} />
+                <div className='w-full h-1.5 bg-[#161616] rounded-full overflow-hidden'>
+                  <div className='h-full rounded-full bg-gradient-to-r from-[#D4AF37]/60 to-[#D4AF37] transition-all duration-700'
+                    style={{ width:`${pct}%` }}/>
                 </div>
               </div>
-              <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0 }}>
-                {movies.length > 0 && <span style={{ padding: '4px 10px', background: '#141414', border: '1px solid #1E1E1E', borderRadius: 8, fontSize: 11, color: 'rgba(255,255,255,0.35)' }}>🎬 {movies.length}</span>}
-                {shows.length  > 0 && <span style={{ padding: '4px 10px', background: '#141414', border: '1px solid #1E1E1E', borderRadius: 8, fontSize: 11, color: 'rgba(255,255,255,0.35)' }}>📺 {shows.length}</span>}
+              <div className='flex gap-2 flex-shrink-0'>
+                {movies.length > 0 && (
+                  <span className='px-2.5 py-1 bg-[#141414] border border-[#1E1E1E] rounded-lg text-[11px] text-white/35'>
+                    🎬 {movies.length} film{movies.length>1?'s':''}
+                  </span>
+                )}
+                {shows.length > 0 && (
+                  <span className='px-2.5 py-1 bg-[#141414] border border-[#1E1E1E] rounded-lg text-[11px] text-white/35'>
+                    📺 {shows.length} show{shows.length>1?'s':''}
+                  </span>
+                )}
               </div>
             </div>
           )}
 
           {/* Filter tabs */}
           {!loading && items.length > 0 && (
-            <div style={{ display: 'flex', borderBottom: '1px solid #141414', gap: 0 }}>
-              {[{ id: 'all', label: 'All', count: items.length }, { id: 'unwatched', label: 'Unwatched', count: movies.filter(i => !i.is_completed).length + shows.length }, { id: 'watched', label: 'Watched', count: moviesDone }].map(t => (
+            <div className='flex gap-0 border-b border-[#141414]'>
+              {[
+                { id:'all',       label:'All',       count:items.length },
+                { id:'unwatched', label:'Unwatched',  count:movies.filter(i=>!i.is_completed).length + shows.length },
+                { id:'watched',   label:'Watched',   count:moviesDone },
+              ].map(t => (
                 <button key={t.id} onClick={() => setFilter(t.id)}
-                  style={{ padding: '0.625rem 1rem', fontSize: 12, fontWeight: 700, background: 'none', border: 'none', borderBottom: `2px solid ${filter === t.id ? '#D4AF37' : 'transparent'}`, marginBottom: -1, cursor: 'pointer', color: filter === t.id ? '#D4AF37' : 'rgba(255,255,255,0.25)', transition: 'all 0.15s ease' }}>
+                  className={`px-4 py-2.5 text-xs font-bold transition-all border-b-2 -mb-px ${
+                    filter===t.id ? 'text-[#D4AF37] border-[#D4AF37]' : 'text-white/25 border-transparent hover:text-white/50'
+                  }`}>
                   {t.label}
-                  <span style={{ marginLeft: 6, padding: '2px 6px', borderRadius: 5, fontSize: 10, background: filter === t.id ? 'rgba(212,175,55,0.15)' : '#181818', color: filter === t.id ? '#D4AF37' : 'rgba(255,255,255,0.2)' }}>{t.count}</span>
+                  <span className={`ml-1.5 px-1.5 py-0.5 rounded text-[10px] ${
+                    filter===t.id ? 'bg-[#D4AF37]/15 text-[#D4AF37]' : 'bg-[#181818] text-white/20'
+                  }`}>{t.count}</span>
                 </button>
               ))}
             </div>
           )}
         </div>
 
-        {/* Content */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '1.25rem 1.75rem', scrollbarWidth: 'thin', scrollbarColor: '#1E1E1E transparent' }}>
+        {/* Scrollable body */}
+        <div className='flex-1 overflow-y-auto px-7 py-5 scrollbar-modal'>
           {loading ? (
-            <div style={{ padding: '6rem 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem' }}>
-              <Spin size={36} /><p style={{ fontSize: 13, color: 'rgba(255,255,255,0.2)', margin: 0 }}>Loading your list…</p>
+            <div className='py-32 flex flex-col items-center gap-4'>
+              <Spin cls='w-10 h-10'/>
+              <p className='text-white/20 text-sm'>Loading your list…</p>
             </div>
           ) : error ? (
-            <div style={{ padding: '6rem 0', textAlign: 'center' }}><p style={{ fontSize: 13, color: 'rgba(248,113,113,0.6)', margin: 0 }}>{error}</p></div>
+            <div className='py-32 text-center'><p className='text-red-400/60 text-sm'>{error}</p></div>
           ) : items.length === 0 ? (
-            <div style={{ padding: '6rem 0', textAlign: 'center' }}>
-              <div style={{ width: 60, height: 60, background: '#111', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1rem' }}>
-                <svg width={28} height={28} fill='none' stroke='#1E1E1E' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={1.5} d='M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4'/></svg>
+            <div className='py-32 text-center'>
+              <div className='w-16 h-16 bg-[#111] rounded-full flex items-center justify-center mx-auto mb-4'>
+                <svg className='w-8 h-8 text-[#1E1E1E]' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+                  <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={1.5} d='M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4'/>
+                </svg>
               </div>
-              <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.2)', margin: 0 }}>No titles in this list yet.</p>
+              <p className='text-white/20 text-sm'>No titles in this list yet.</p>
             </div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+            <div className='space-y-5'>
               {filtShows.length > 0 && (
-                <div>
-                  <p style={{ fontSize: 9, fontWeight: 900, color: 'rgba(255,255,255,0.2)', textTransform: 'uppercase', letterSpacing: '0.2em', marginBottom: '0.75rem' }}>TV Shows</p>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                    {filtShows.map((show, i) => <TVCard key={show.id} item={show} index={i} userId={userId} onTVProgressChange={() => {}} />)}
-                  </div>
+                <div className='space-y-3'>
+                  <p className='text-[10px] font-black text-white/20 uppercase tracking-widest'>TV Shows</p>
+                  {filtShows.map((show, i) => (
+                    <TVCard key={show.id} item={show} index={i} userId={userId} onTVProgressChange={handleTVProgress}/>
+                  ))}
                 </div>
               )}
               {filtMovies.length > 0 && (
                 <div>
-                  {filtShows.length > 0 && <p style={{ fontSize: 9, fontWeight: 900, color: 'rgba(255,255,255,0.2)', textTransform: 'uppercase', letterSpacing: '0.2em', marginBottom: '0.75rem' }}>Films</p>}
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.75rem' }}>
-                    {filtMovies.map((m, i) => <MovieCard key={m.id} item={m} index={i} userId={userId} onToggle={handleMovieToggle} />)}
+                  {filtShows.length > 0 && (
+                    <p className='text-[10px] font-black text-white/20 uppercase tracking-widest mb-3'>Films</p>
+                  )}
+                  <div className='grid grid-cols-2 gap-3'>
+                    {filtMovies.map((m, i) => (
+                      <MovieCard key={m.id} item={m} index={i} userId={userId} onToggle={handleMovieToggle}/>
+                    ))}
                   </div>
                 </div>
               )}
               {filtMovies.length === 0 && filtShows.length === 0 && (
-                <div style={{ padding: '4rem 0', textAlign: 'center' }}><p style={{ fontSize: 13, color: 'rgba(255,255,255,0.2)', margin: 0 }}>No {filter} titles.</p></div>
+                <div className='py-20 text-center'>
+                  <p className='text-white/20 text-sm'>No {filter} titles.</p>
+                </div>
               )}
             </div>
           )}
         </div>
 
         {/* Footer */}
-        <div style={{ padding: '0.875rem 1.75rem', borderTop: '1px solid #141414', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-          <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.15)', fontVariantNumeric: 'tabular-nums' }}>{items.length} title{items.length !== 1 ? 's' : ''}{shows.length > 0 ? ' · AI-verified episode tracking' : ''}</span>
+        <div className='px-7 py-4 border-t border-[#141414] flex items-center justify-between flex-shrink-0'>
+          <span className='text-white/15 text-xs tabular-nums'>
+            {items.length} title{items.length!==1?'s':''}
+            {shows.length > 0 && ' · AI-verified episode tracking'}
+          </span>
           <button onClick={onClose}
-            style={{ padding: '0.5rem 1.25rem', borderRadius: 10, background: '#141414', border: '1px solid rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.4)', fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'all 0.15s ease' }}
-            onMouseEnter={e => { e.currentTarget.style.color = '#fff'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)' }}
-            onMouseLeave={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.4)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)' }}>
+            className='px-5 py-2 rounded-xl bg-[#141414] hover:bg-[#1C1C1C] text-white/40 hover:text-white text-sm font-semibold transition-all'>
             Close
           </button>
         </div>
       </div>
 
       <style>{`
-        @keyframes listOverlayIn { from { opacity: 0 } to { opacity: 1 } }
-        @keyframes listModalIn   { from { opacity: 0; transform: scale(0.96) translateY(12px) } to { opacity: 1; transform: scale(1) translateY(0) } }
-        @keyframes cardSlideIn   { from { opacity: 0; transform: translateY(8px) } to { opacity: 1; transform: translateY(0) } }
-        @keyframes listSpin      { to { transform: rotate(360deg) } }
+        @keyframes overlayIn { from{opacity:0} to{opacity:1} }
+        @keyframes modalIn   { from{opacity:0;transform:scale(0.96) translateY(10px)} to{opacity:1;transform:scale(1) translateY(0)} }
+        @keyframes cardIn    { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+        .scrollbar-modal::-webkit-scrollbar       { width:5px }
+        .scrollbar-modal::-webkit-scrollbar-track { background:transparent }
+        .scrollbar-modal::-webkit-scrollbar-thumb { background:#1E1E1E;border-radius:4px }
+        .scrollbar-modal::-webkit-scrollbar-thumb:hover { background:#D4AF37 }
       `}</style>
     </div>
   )
 }
 
-/* ─── CurrentListTab sidebar ── */
+/* ─── CurrentListTab (sidebar) ─────────────────────── */
 const CurrentListTab = ({ lists = [], userId, onViewAll, onListUpdate }) => {
   const [activeList, setActiveList] = useState(null)
   const [localLists, setLocalLists] = useState(lists)
@@ -707,7 +945,9 @@ const CurrentListTab = ({ lists = [], userId, onViewAll, onListUpdate }) => {
   useEffect(() => { setLocalLists(lists) }, [lists])
 
   const handleCountChange = useCallback((listId, completedCount, itemCount) => {
-    setLocalLists(prev => prev.map(l => l.id === listId ? { ...l, completedCount, itemCount } : l))
+    setLocalLists(prev => prev.map(l =>
+      l.id === listId ? { ...l, completedCount, itemCount } : l
+    ))
     onListUpdate?.(listId, { completedCount, itemCount })
   }, [onListUpdate])
 
@@ -715,62 +955,73 @@ const CurrentListTab = ({ lists = [], userId, onViewAll, onListUpdate }) => {
 
   return (
     <>
-      <div style={{ background: '#0A0A0A', border: '1px solid #1A1A1A', borderRadius: 16, overflow: 'hidden' }}>
+      <div className='bg-[#0A0A0A] border border-[#1A1A1A] rounded-2xl overflow-hidden'>
         {/* Header */}
-        <div style={{ padding: '0.875rem 1rem', borderBottom: '1px solid #161616', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <svg width={15} height={15} fill='none' stroke='#D4AF37' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2'/></svg>
-            <h2 style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 16, letterSpacing: '0.12em', color: '#fff', margin: 0 }}>YOUR LISTS</h2>
+        <div className='px-4 py-3.5 border-b border-[#161616] flex items-center justify-between'>
+          <div className='flex items-center gap-2'>
+            <svg className='w-4 h-4 text-[#D4AF37]' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+              <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2'/>
+            </svg>
+            <h2 className='font-bebas text-[17px] tracking-widest text-white'>YOUR LISTS</h2>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            {localLists.length > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.2)' }}>{localLists.length}</span>}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 3, padding: '2px 7px', borderRadius: 20, border: '1px solid rgba(212,175,55,0.2)', background: 'rgba(212,175,55,0.05)' }}>
-              <span style={{ fontSize: 8 }}>✨</span>
-              <span style={{ fontSize: 8, fontWeight: 900, color: 'rgba(212,175,55,0.5)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>AI Quiz</span>
+          <div className='flex items-center gap-2'>
+            {localLists.length > 0 && (
+              <span className='text-[11px] font-bold text-white/20 tabular-nums'>{localLists.length}</span>
+            )}
+            {/* AI badge */}
+            <div className='flex items-center gap-1 px-1.5 py-0.5 rounded-full border border-[#D4AF37]/20 bg-[#D4AF37]/5'>
+              <span className='text-[8px]'>✨</span>
+              <span className='text-[8px] font-black text-[#D4AF37]/50 uppercase tracking-wider'>AI Quiz</span>
             </div>
           </div>
         </div>
 
-        {/* List rows */}
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
+        {/* Rows */}
+        <div className='divide-y divide-[#0F0F0F]'>
           {localLists.length > 0 ? localLists.slice(0, 6).map((list, i) => {
-            const p = pct(list), done = list.completedCount || 0, total = list.itemCount || 0
+            const p = pct(list), done = list.completedCount||0, total = list.itemCount||0
             const full = p === 100 && total > 0
             return (
               <button key={list.id} onClick={() => setActiveList(list)}
-                style={{ padding: '0.875rem 1rem', background: 'transparent', border: 'none', borderBottom: '1px solid #0F0F0F', cursor: 'pointer', textAlign: 'left', transition: 'background 0.15s', animation: `rowSlideIn 0.3s ease-out ${i * 0.05}s both` }}
-                onMouseEnter={e => e.currentTarget.style.background = '#0D0D0D'}
-                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', marginBottom: 8 }}>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.7)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{list.name}</span>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', flexShrink: 0 }}>
-                    {list.isPublic && <span style={{ fontSize: 9, fontWeight: 900, color: 'rgba(96,165,250,0.5)', textTransform: 'uppercase' }}>pub</span>}
-                    {full ? <span style={{ color: '#D4AF37', fontSize: 11 }}>✓</span> : <span style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.2)', fontVariantNumeric: 'tabular-nums' }}>{p}%</span>}
+                className='w-full px-4 py-3.5 hover:bg-[#0D0D0D] active:bg-[#111] transition-colors text-left group'
+                style={{ animation:`rowIn 0.3s ease-out ${i*0.05}s both` }}>
+                <div className='flex items-center justify-between gap-2 mb-2'>
+                  <span className='text-sm font-semibold text-white/70 group-hover:text-white transition-colors line-clamp-1 flex-1'>
+                    {list.name}
+                  </span>
+                  <div className='flex items-center gap-1.5 flex-shrink-0'>
+                    {list.isPublic && <span className='text-[9px] font-black text-blue-400/50 uppercase tracking-widest'>pub</span>}
+                    {full
+                      ? <span className='text-[#D4AF37] text-xs'>✓</span>
+                      : <span className='text-[11px] font-bold text-white/20 tabular-nums'>{p}%</span>
+                    }
                   </div>
                 </div>
-                <div style={{ height: 3, background: '#161616', borderRadius: 2, overflow: 'hidden', marginBottom: 5 }}>
-                  <div style={{ height: '100%', width: `${p}%`, borderRadius: 2, transition: 'width 0.5s ease', background: full ? 'linear-gradient(90deg, #D4AF37, #E8C55B)' : 'rgba(212,175,55,0.4)' }} />
+                <div className='w-full h-[3px] bg-[#161616] rounded-full overflow-hidden mb-1.5'>
+                  <div className={`h-full rounded-full transition-all duration-500 ${
+                    full ? 'bg-gradient-to-r from-[#D4AF37] to-[#E8C55B]' : 'bg-[#D4AF37]/40 group-hover:bg-[#D4AF37]/60'
+                  }`} style={{ width:`${p}%` }}/>
                 </div>
-                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.2)', fontVariantNumeric: 'tabular-nums' }}>{done}/{total} watched</span>
+                <span className='text-[11px] text-white/20 tabular-nums'>{done}/{total} watched</span>
               </button>
             )
           }) : (
-            <div style={{ padding: '2.5rem 1rem', textAlign: 'center' }}>
-              <div style={{ width: 44, height: 44, background: '#111', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 0.75rem' }}>
-                <svg width={22} height={22} fill='none' stroke='#1E1E1E' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={1.5} d='M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2'/></svg>
+            <div className='px-4 py-10 text-center'>
+              <div className='w-12 h-12 bg-[#111] rounded-full flex items-center justify-center mx-auto mb-3'>
+                <svg className='w-6 h-6 text-[#1E1E1E]' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+                  <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={1.5} d='M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2'/>
+                </svg>
               </div>
-              <p style={{ fontSize: 12, fontWeight: 600, color: 'rgba(255,255,255,0.25)', margin: '0 0 4px' }}>No lists yet</p>
-              <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.15)', margin: 0 }}>Create your first watchlist!</p>
+              <p className='text-white/25 text-xs font-semibold mb-1'>No lists yet</p>
+              <p className='text-white/15 text-xs'>Create your first watchlist!</p>
             </div>
           )}
         </div>
 
         {localLists.length > 0 && onViewAll && (
-          <div style={{ padding: '0.75rem 1rem', borderTop: '1px solid #111' }}>
+          <div className='px-4 py-3 border-t border-[#111]'>
             <button onClick={onViewAll}
-              style={{ width: '100%', padding: '0.375rem', background: 'transparent', border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 900, color: 'rgba(212,175,55,0.5)', textTransform: 'uppercase', letterSpacing: '0.12em', transition: 'color 0.15s ease' }}
-              onMouseEnter={e => e.currentTarget.style.color = '#D4AF37'}
-              onMouseLeave={e => e.currentTarget.style.color = 'rgba(212,175,55,0.5)'}>
+              className='w-full py-1.5 text-center text-xs font-bold text-[#D4AF37]/50 hover:text-[#D4AF37] transition-colors tracking-wide'>
               VIEW ALL LISTS →
             </button>
           </div>
@@ -778,12 +1029,16 @@ const CurrentListTab = ({ lists = [], userId, onViewAll, onListUpdate }) => {
       </div>
 
       {activeList && (
-        <ListModal list={activeList} userId={userId} onClose={() => setActiveList(null)} onCountChange={handleCountChange} />
+        <ListModal
+          list={activeList}
+          userId={userId}
+          onClose={() => setActiveList(null)}
+          onCountChange={handleCountChange}
+        />
       )}
 
       <style>{`
-        @keyframes rowSlideIn { from { opacity: 0; transform: translateX(-5px) } to { opacity: 1; transform: translateX(0) } }
-        @keyframes listSpin   { to { transform: rotate(360deg) } }
+        @keyframes rowIn { from{opacity:0;transform:translateX(-5px)} to{opacity:1;transform:translateX(0)} }
       `}</style>
     </>
   )

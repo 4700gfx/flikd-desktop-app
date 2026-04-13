@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import Navbar from '../components/sections/Navbar'
 import CreatePost from '../components/sections/CreatePost'
 import Post from '../components/common/Post'
@@ -6,22 +6,7 @@ import CurrentListTab from '../components/sections/CurrentListTab'
 import RecentActivity from '../components/sections/RecentActivity'
 import supabase from '../config/SupabaseClient'
 import { ensureUserProfile } from '../utils/ProfileHelper'
-
-/**
- * FLIK'D Home — v3 "Cinéaste"
- * ─────────────────────────────
- * Luxury cinema-dark feed. Gold accents. Bebas Neue + DM Sans.
- *
- * UI/UX improvements:
- *  ✦ Refined sticky header with ambient gold glow on scroll
- *  ✦ Feed tab bar: For You · Following · New Releases
- *  ✦ Skeleton loaders instead of blank page
- *  ✦ Floating "scroll to top" pill
- *  ✦ Post entrance stagger animation
- *  ✦ Sidebar stats card (watch count, reviews, streak)
- *  ✦ DM Sans body · Bebas Neue for all labels/stats
- *  ✦ Empty state with cinematic illustration
- */
+import { ListProgressProvider, useListProgress } from '../context/ListProgressContext'
 
 /* ─── Font injection ── */
 if (typeof document !== 'undefined' && !document.getElementById('flikd-fonts')) {
@@ -34,75 +19,309 @@ if (typeof document !== 'undefined' && !document.getElementById('flikd-fonts')) 
 
 const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY
 
-if (!TMDB_API_KEY) {
-  console.error('[Flik\'d] VITE_TMDB_API_KEY is not defined. Movie search will not work.')
-}
-
-/* ─── Skeleton post card ─────────────────────────────────────────────────── */
+/* ─── Skeleton ──────────────────────────────────────────────── */
 const PostSkeleton = ({ delay = 0 }) => (
-  <div className='px-6 py-5 border-b border-[#141414] animate-pulse'
-    style={{ animationDelay: `${delay}ms` }}>
-    <div className='flex items-start gap-3.5'>
-      <div className='w-11 h-11 rounded-full bg-[#181818] flex-shrink-0' />
-      <div className='flex-1'>
-        <div className='flex items-center gap-3 mb-3'>
-          <div className='h-3.5 w-28 bg-[#181818] rounded-full' />
-          <div className='h-3 w-16 bg-[#141414] rounded-full' />
+  <div className='px-5 py-5 border-b border-[#141414] animate-pulse' style={{ animationDelay: `${delay}ms` }}>
+    <div className='flex items-start gap-3'>
+      <div className='w-10 h-10 rounded-full bg-[#181818] flex-shrink-0' />
+      <div className='flex-1 space-y-3'>
+        <div className='flex gap-3'>
+          <div className='h-3 w-24 bg-[#181818] rounded-full' />
+          <div className='h-3 w-14 bg-[#141414] rounded-full' />
         </div>
         <div className='rounded-2xl bg-[#0F0F0F] border border-[#181818] overflow-hidden'>
-          <div className='h-44 bg-[#141414]' />
+          <div className='h-36 bg-[#141414]' />
           <div className='flex gap-4 p-4'>
-            <div className='w-20 h-[116px] bg-[#181818] rounded-xl -mt-12 flex-shrink-0' />
-            <div className='flex-1 pt-1 space-y-2'>
-              <div className='h-5 w-3/4 bg-[#181818] rounded-lg' />
+            <div className='w-16 h-24 bg-[#181818] rounded-xl -mt-10 flex-shrink-0' />
+            <div className='flex-1 space-y-2 pt-1'>
+              <div className='h-4 w-3/4 bg-[#181818] rounded-lg' />
               <div className='h-3 w-1/3 bg-[#141414] rounded-full' />
-              <div className='flex gap-1.5'>
-                {[60, 48, 72].map((w, i) => (
-                  <div key={i} className='h-5 bg-[#141414] rounded-md' style={{ width: w }} />
-                ))}
-              </div>
             </div>
           </div>
         </div>
-        <div className='mt-3 space-y-1.5'>
+        <div className='space-y-1.5'>
           <div className='h-3 bg-[#141414] rounded-full w-full' />
-          <div className='h-3 bg-[#141414] rounded-full w-5/6' />
+          <div className='h-3 bg-[#141414] rounded-full w-4/5' />
         </div>
       </div>
     </div>
   </div>
 )
 
-/* ─── Sidebar stat card ──────────────────────────────────────────────────── */
-const StatCard = ({ label, value, sub, icon }) => (
-  <div className='flex items-center gap-3 px-4 py-3.5 rounded-2xl border border-[#181818]
-    bg-[#0D0D0D] hover:border-[#252525] hover:bg-[#0F0F0F] transition-all duration-200 group'>
-    <div className='w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0
-      bg-[#D4AF37]/8 border border-[#D4AF37]/15 group-hover:bg-[#D4AF37]/12 transition-colors'>
-      <span className='text-base'>{icon}</span>
-    </div>
-    <div className='flex-1 min-w-0'>
-      <p className='leading-none mb-0.5'
-        style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '20px', color: '#D4AF37', letterSpacing: '0.04em' }}>
-        {value}
-      </p>
-      <p className='text-[10px] font-black text-white/25 uppercase tracking-widest truncate'
+/* ─── Bento stat tile ────────────────────────────────────────── */
+const BentoStat = ({ icon, label, value, accent = false, wide = false }) => (
+  <div className={`rounded-2xl border transition-all duration-200 cursor-default group
+    hover:border-[#D4AF37]/25 hover:bg-[#0F0F0F]
+    ${accent
+      ? 'bg-[#D4AF37]/5 border-[#D4AF37]/20'
+      : 'bg-[#0D0D0D] border-[#181818]'
+    } ${wide ? 'col-span-2' : ''}`}
+    style={{ padding: '14px 16px' }}>
+    <div className='flex items-center gap-2 mb-2'>
+      <span className='text-sm'>{icon}</span>
+      <p className='text-[9px] font-black text-white/25 uppercase tracking-[0.18em]'
         style={{ fontFamily: "'Bebas Neue', sans-serif" }}>
         {label}
       </p>
-      {sub && <p className='text-[10px] text-white/20 mt-0.5' style={{ fontFamily: "'DM Sans', sans-serif" }}>{sub}</p>}
     </div>
+    <p className='leading-none'
+      style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '28px', color: accent ? '#D4AF37' : '#fff', letterSpacing: '0.04em' }}>
+      {value}
+    </p>
   </div>
 )
 
-/* ─── Feed tabs ──────────────────────────────────────────────────────────── */
+/* ─── Bento streak card ─────────────────────────────────────── */
+const StreakCard = ({ streak }) => (
+  <div className='rounded-2xl bg-gradient-to-br from-[#D4AF37]/10 to-[#D4AF37]/3
+    border border-[#D4AF37]/20 flex items-center justify-between px-4 py-3.5
+    hover:border-[#D4AF37]/35 transition-all duration-200 cursor-default'>
+    <div>
+      <p className='text-[9px] font-black text-[#D4AF37]/60 uppercase tracking-[0.18em] mb-1'
+        style={{ fontFamily: "'Bebas Neue', sans-serif" }}>
+        Day Streak
+      </p>
+      <p style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '36px', color: '#D4AF37', letterSpacing: '0.04em', lineHeight: 1 }}>
+        {streak}
+      </p>
+    </div>
+    <div className='text-4xl' style={{ filter: 'drop-shadow(0 0 8px rgba(212,175,55,0.4))' }}>🔥</div>
+  </div>
+)
+
+/* ─── Feed tab bar ───────────────────────────────────────────── */
 const FEED_TABS = [
-  { id: 'foryou',   label: 'For You',      icon: '✦' },
-  { id: 'following',label: 'Following',    icon: '👥' },
-  { id: 'new',      label: 'New Releases', icon: '🎬' },
+  { id: 'foryou',    label: 'For You',      icon: '✦' },
+  { id: 'following', label: 'Following',    icon: '👥' },
+  { id: 'new',       label: 'New Releases', icon: '🎬' },
 ]
 
-/* ─── Home ───────────────────────────────────────────────────────────────── */
+/* ─── Inner home (needs list context) ──────────────────────────*/
+const HomeInner = ({ currentUser, posts, postsLoading, userLists,
+  recentActivities, handlePostCreate, handleListCreate,
+  handleListItemAdd, handleMovieSearch, handleMovieDetails,
+  mainRef, scrolled, showScrollTop }) => {
+
+  const [feedTab, setFeedTab] = useState('foryou')
+  const { lists, updateProgress } = useListProgress()
+
+  // Merge external userLists with context lists (context is source of truth after first load)
+  const displayLists = lists.length > 0 ? lists : userLists
+
+  return (
+    <div className='flex gap-0 xl:gap-6 2xl:gap-8 px-0 xl:px-4 2xl:px-6'>
+
+      {/* ══════════ MAIN FEED ══════════ */}
+      <div className='flex-1 min-w-0 border-x border-[#151515] relative'>
+
+        {/* ── Sticky header ── */}
+        <div className={`sticky top-0 z-40 transition-all duration-300
+          ${scrolled
+            ? 'bg-[#0A0A0A]/96 backdrop-blur-xl border-b border-[#1A1A1A] shadow-[0_8px_32px_rgba(0,0,0,.6)]'
+            : 'bg-[#0A0A0A] border-b border-[#141414]'
+          }`}>
+          {scrolled && (
+            <div className='absolute inset-x-0 bottom-0 h-px'
+              style={{ background: 'linear-gradient(90deg, transparent, rgba(212,175,55,0.15) 50%, transparent)' }} />
+          )}
+          <div className='px-5 pt-4 pb-2 flex items-center justify-between'>
+            <h1 style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '26px', letterSpacing: '0.1em', color: '#fff' }}>
+              HOME
+            </h1>
+            {currentUser && (
+              <div className='flex items-center gap-2'>
+                <div className='flex items-center gap-1.5 px-3 py-1.5 bg-[#141414] border border-[#222] rounded-full
+                  hover:border-[#D4AF37]/25 transition-colors duration-200'>
+                  <svg className='w-3 h-3 text-[#D4AF37]' fill='currentColor' viewBox='0 0 20 20'>
+                    <path d='M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z' />
+                  </svg>
+                  <span className='font-bold text-white text-[13px] tabular-nums'
+                    style={{ fontFamily: "'Bebas Neue', sans-serif", letterSpacing: '0.04em' }}>
+                    {currentUser.totalPoints.toLocaleString()}
+                  </span>
+                </div>
+                <div className='px-3 py-1.5 rounded-full text-[#0A0A0A] font-black text-[12px]'
+                  style={{ background: 'linear-gradient(135deg, #D4AF37, #F0C93A)', fontFamily: "'Bebas Neue', sans-serif", letterSpacing: '0.08em' }}>
+                  LVL {currentUser.level}
+                </div>
+              </div>
+            )}
+          </div>
+          <div className='flex px-3 pb-0 gap-0 border-t border-[#111]'>
+            {FEED_TABS.map(tab => (
+              <button key={tab.id} onClick={() => setFeedTab(tab.id)}
+                className={`flex items-center gap-1.5 px-4 py-3 text-[11px] font-bold border-b-2 -mb-px
+                  transition-all duration-200 whitespace-nowrap
+                  ${feedTab === tab.id
+                    ? 'text-[#D4AF37] border-[#D4AF37]'
+                    : 'text-white/30 border-transparent hover:text-white/60 hover:border-white/10'
+                  }`}
+                style={{ fontFamily: "'Bebas Neue', sans-serif", letterSpacing: '0.08em', fontSize: '12px' }}>
+                <span style={{ transition: 'transform .2s', transform: feedTab === tab.id ? 'scale(1.2)' : 'scale(1)' }}>
+                  {tab.icon}
+                </span>
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* ── Create Post ── */}
+        <div className='border-b border-[#141414]'>
+          <CreatePost
+            currentUser={currentUser}
+            onPostCreate={handlePostCreate}
+            onListCreate={handleListCreate}
+            onListItemAdd={handleListItemAdd}
+            onMovieSearch={handleMovieSearch}
+            onMovieDetails={handleMovieDetails}
+            userLists={displayLists}
+          />
+        </div>
+
+        {/* ── Feed ── */}
+        <div className='pb-32'>
+          {postsLoading
+            ? [0, 1, 2].map(i => <PostSkeleton key={i} delay={i * 80} />)
+            : posts.length > 0
+              ? posts.map((post, index) => (
+                  <Post
+                    key={post.id}
+                    post={post}
+                    currentUserId={currentUser?.id}
+                    onUserClick={(u) => console.log('User clicked:', u)}
+                    style={{ animation: `postReveal .4s ease-out ${Math.min(index * 0.045, 0.5)}s both` }}
+                  />
+                ))
+              : (
+                <div className='flex flex-col items-center justify-center py-28 px-8'>
+                  <div className='relative w-20 h-20 mb-8'>
+                    <div className='w-20 h-20 rounded-full border-2 border-[#1E1E1E] flex items-center justify-center'
+                      style={{ background: 'radial-gradient(circle, rgba(212,175,55,0.05), transparent)' }}>
+                      <svg className='w-9 h-9 text-[#D4AF37]/20' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+                        <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={1.2}
+                          d='M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z' />
+                      </svg>
+                    </div>
+                    <div className='absolute inset-0 rounded-full border border-[#D4AF37]/10 animate-ping'
+                      style={{ animationDuration: '3s' }} />
+                  </div>
+                  <h3 style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '24px', letterSpacing: '0.1em', color: '#fff', marginBottom: '10px' }}>
+                    NO REVIEWS YET
+                  </h3>
+                  <p style={{ fontFamily: "'DM Sans', sans-serif", color: 'rgba(255,255,255,0.3)', fontSize: '14px', textAlign: 'center', maxWidth: '260px', lineHeight: '1.6' }}>
+                    Be the first to share your thoughts on a film or series.
+                  </p>
+                </div>
+              )
+          }
+        </div>
+
+        {/* Scroll to top */}
+        {showScrollTop && (
+          <button
+            onClick={() => mainRef.current?.scrollTo({ top: 0, behavior: 'smooth' })}
+            className='fixed bottom-8 right-8 z-50 flex items-center gap-2 px-4 py-2.5 rounded-full
+              border border-[#D4AF37]/30 shadow-2xl shadow-black/60
+              hover:border-[#D4AF37]/60 hover:scale-105 active:scale-95 transition-all duration-200'
+            style={{ background: 'linear-gradient(135deg, #0E0E0E, #141414)', animation: 'scrollTopIn .2s ease-out' }}>
+            <svg className='w-3.5 h-3.5 text-[#D4AF37]' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+              <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M5 10l7-7m0 0l7 7m-7-7v18' />
+            </svg>
+            <span className='text-[#D4AF37] text-[11px] font-black'
+              style={{ fontFamily: "'Bebas Neue', sans-serif", letterSpacing: '0.08em' }}>
+              TOP
+            </span>
+          </button>
+        )}
+      </div>
+
+      {/* ══════════ BENTO SIDEBAR ══════════ */}
+      <aside className='hidden xl:flex flex-col w-72 2xl:w-80 flex-shrink-0
+        sticky top-0 h-screen overflow-y-auto py-4 space-y-3 pr-1'
+        style={{ scrollbarWidth: 'none' }}>
+
+        {/* ── Bento profile card ── */}
+        {currentUser && (
+          <div className='rounded-2xl border border-[#181818] bg-[#0D0D0D] overflow-hidden'>
+            <div className='h-[3px]'
+              style={{ background: 'linear-gradient(90deg, transparent, #D4AF37 30%, #F0C93A 50%, #D4AF37 70%, transparent)' }} />
+            <div className='p-4'>
+              <div className='flex items-center gap-3 mb-4'>
+                <div className='w-10 h-10 rounded-full overflow-hidden ring-2 ring-[#D4AF37]/20 flex-shrink-0'>
+                  {currentUser.avatar
+                    ? <img src={currentUser.avatar} alt={currentUser.displayName} className='w-full h-full object-cover' />
+                    : <div className='w-full h-full flex items-center justify-center text-[#0A0A0A] font-black'
+                        style={{ background: 'linear-gradient(135deg, #D4AF37, #F0C93A)', fontFamily: "'Bebas Neue', sans-serif", fontSize: '15px' }}>
+                        {currentUser.displayName?.[0]?.toUpperCase() || 'U'}
+                      </div>
+                  }
+                </div>
+                <div className='flex-1 min-w-0'>
+                  <p className='text-white font-semibold text-[13px] truncate'>{currentUser.displayName}</p>
+                  {currentUser.username && (
+                    <p className='text-[11px] text-white/30'>@{currentUser.username}</p>
+                  )}
+                </div>
+                <div className='px-2 py-1 rounded-full flex-shrink-0 text-[#0A0A0A] font-black text-[10px]'
+                  style={{ background: 'linear-gradient(135deg, #D4AF37, #F0C93A)', fontFamily: "'Bebas Neue', sans-serif", letterSpacing: '0.08em' }}>
+                  LVL {currentUser.level}
+                </div>
+              </div>
+
+              {/* Bento stat grid */}
+              <div className='grid grid-cols-2 gap-2'>
+                <BentoStat icon='🎬' label='Watched' value={currentUser.watchedCount || 0} accent />
+                <BentoStat icon='✍️' label='Reviews'
+                  value={currentUser.reviewCount || posts?.filter(p => p.userId === currentUser.id).length || 0} />
+                <StreakCard streak={currentUser.streak || 0} />
+                <BentoStat icon='📋' label='Lists' value={displayLists.length} />
+              </div>
+
+              {/* XP bar */}
+              <div className='mt-3 pt-3 border-t border-[#1A1A1A]'>
+                <div className='flex justify-between items-center mb-1.5'>
+                  <span className='text-[9px] font-black text-white/25 uppercase tracking-widest'
+                    style={{ fontFamily: "'Bebas Neue', sans-serif" }}>
+                    XP Progress
+                  </span>
+                  <span className='text-[11px] font-black text-[#D4AF37]'
+                    style={{ fontFamily: "'Bebas Neue', sans-serif" }}>
+                    {(currentUser.totalPoints % 500)}/500
+                  </span>
+                </div>
+                <div className='h-1.5 bg-[#141414] rounded-full overflow-hidden'>
+                  <div className='h-full rounded-full transition-all duration-1000'
+                    style={{
+                      width: `${((currentUser.totalPoints % 500) / 500) * 100}%`,
+                      background: 'linear-gradient(90deg, #D4AF37, #F0C93A)',
+                    }} />
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Lists (synced via context) ── */}
+        <CurrentListTab
+          lists={displayLists}
+          userId={currentUser?.id}
+          onListClick={(list) => console.log('List:', list)}
+          onViewAll={() => console.log('View all')}
+          onCountChange={updateProgress}
+        />
+
+        {/* ── Recent activity ── */}
+        <RecentActivity
+          activities={recentActivities}
+          onActivityClick={(a) => console.log('Activity:', a)}
+        />
+      </aside>
+    </div>
+  )
+}
+
+/* ─── Home ───────────────────────────────────────────────────── */
 const Home = () => {
   const [currentUser,      setCurrentUser]      = useState(null)
   const [posts,            setPosts]            = useState([])
@@ -111,12 +330,10 @@ const Home = () => {
   const [loading,          setLoading]          = useState(true)
   const [postsLoading,     setPostsLoading]     = useState(true)
   const [error,            setError]            = useState(null)
-  const [feedTab,          setFeedTab]          = useState('foryou')
   const [scrolled,         setScrolled]         = useState(false)
   const [showScrollTop,    setShowScrollTop]    = useState(false)
-  const mainRef = React.useRef(null)
+  const mainRef = useRef(null)
 
-  /* ── Scroll listener ── */
   useEffect(() => {
     const el = mainRef.current
     if (!el) return
@@ -138,14 +355,14 @@ const Home = () => {
           const profile = await ensureUserProfile(user)
           if (profile) {
             setCurrentUser({
-              id:          user.id,
-              username:    profile.username,
-              displayName: profile.display_name,
-              email:       user.email,
-              avatar:      profile.avatar_url,
-              bio:         profile.bio,
-              totalPoints: profile.total_points  || 0,
-              level:       profile.level         || 1,
+              id:           user.id,
+              username:     profile.username,
+              displayName:  profile.display_name,
+              email:        user.email,
+              avatar:       profile.avatar_url,
+              bio:          profile.bio,
+              totalPoints:  profile.total_points  || 0,
+              level:        profile.level         || 1,
               watchedCount: profile.watched_count || 0,
               reviewCount:  profile.review_count  || 0,
               streak:       profile.streak_days   || 0,
@@ -170,16 +387,19 @@ const Home = () => {
       try {
         const { data, error } = await supabase
           .from('posts')
-          .select(`
-            *,
-            profiles:user_id (
-              id, username, display_name, avatar_url, level
-            )
-          `)
+          .select(`*, profiles:user_id(id, username, display_name, avatar_url, level)`)
           .order('created_at', { ascending: false })
           .limit(50)
-
         if (error) throw error
+
+        // Fetch which posts the current user liked/disliked
+        const postIds = (data || []).map(p => p.id)
+        const [likesRes, dislikesRes] = await Promise.allSettled([
+          supabase.from('post_likes').select('post_id').eq('user_id', currentUser.id).in('post_id', postIds),
+          supabase.from('post_dislikes').select('post_id').eq('user_id', currentUser.id).in('post_id', postIds),
+        ])
+        const likedSet    = new Set((likesRes.value?.data    || []).map(r => r.post_id))
+        const dislikedSet = new Set((dislikesRes.value?.data || []).map(r => r.post_id))
 
         setPosts((data || []).map(post => ({
           id:       post.id,
@@ -206,20 +426,18 @@ const Home = () => {
             director:            post.director               || null,
             cast:                post.cast_members           || [],
             originalLanguage:    post.original_language      || null,
-            status:              post.status                 || null,
-            productionCompanies: post.production_companies   || [],
           },
-          content:       post.content,
-          rating:        post.rating,
-          timestamp:     post.created_at,
-          likes:         post.likes_count    || 0,
-          dislikes:      post.dislikes_count || 0,
-          reposts:       post.reposts_count  || 0,
-          comments:      post.comments_count || 0,
-          userLiked:     false,
-          userDisliked:  false,
-          userReposted:  false,
-          type:          'review',
+          content:      post.content,
+          rating:       post.rating,
+          timestamp:    post.created_at,
+          likes:        post.likes_count    || 0,
+          dislikes:     post.dislikes_count || 0,
+          reposts:      post.reposts_count  || 0,
+          comments:     post.comments_count || 0,
+          userLiked:    likedSet.has(post.id),
+          userDisliked: dislikedSet.has(post.id),
+          userReposted: false,
+          type:         'review',
         })))
       } catch (err) {
         console.error('Error fetching posts:', err)
@@ -230,7 +448,7 @@ const Home = () => {
     fetchPosts()
   }, [currentUser])
 
-  /* ── Lists ── */
+  /* ── Lists (for context seed) ── */
   useEffect(() => {
     const fetchUserLists = async () => {
       if (!currentUser) return
@@ -247,24 +465,18 @@ const Home = () => {
           completedCount: Number(l.completed_count) || 0,
         })))
       } catch {
-        try {
-          const { data: listsData } = await supabase
-            .from('lists')
-            .select('*, list_items(id, is_completed)')
-            .eq('user_id', currentUser.id)
-            .is('deleted_at', null)
-            .order('updated_at', { ascending: false })
-          setUserLists((listsData || []).map(list => ({
-            id:             list.id,
-            name:           list.name,
-            description:    list.description,
-            isPublic:       list.is_public,
-            itemCount:      list.list_items?.length || 0,
-            completedCount: list.list_items?.filter(i => i.is_completed).length || 0,
-          })))
-        } catch (e) {
-          console.error('Error fetching lists:', e)
-        }
+        const { data: listsData } = await supabase
+          .from('lists').select('*, list_items(id, is_completed)')
+          .eq('user_id', currentUser.id).is('deleted_at', null)
+          .order('updated_at', { ascending: false })
+        setUserLists((listsData || []).map(list => ({
+          id:             list.id,
+          name:           list.name,
+          description:    list.description,
+          isPublic:       list.is_public,
+          itemCount:      list.list_items?.length || 0,
+          completedCount: list.list_items?.filter(i => i.is_completed).length || 0,
+        })))
       }
     }
     fetchUserLists()
@@ -282,16 +494,12 @@ const Home = () => {
           .limit(10)
         if (error) throw error
         setRecentActivities((data || []).map(a => ({
-          id:   a.id,
-          type: a.activity_type,
+          id: a.id, type: a.activity_type,
           user: {
-            id:          a.user_id,
-            username:    a.profiles?.username     || 'unknown',
-            displayName: a.profiles?.display_name || 'User',
-            avatar:      a.profiles?.avatar_url   || null,
+            id: a.user_id, username: a.profiles?.username || 'unknown',
+            displayName: a.profiles?.display_name || 'User', avatar: a.profiles?.avatar_url || null,
           },
-          data:      a.activity_data,
-          timestamp: a.created_at,
+          data: a.activity_data, timestamp: a.created_at,
         })))
       } catch (err) {
         console.error('Error fetching activities:', err)
@@ -304,34 +512,31 @@ const Home = () => {
   const handlePostCreate = useCallback(async (postData) => {
     try {
       const safeRating = Math.min(parseFloat(postData.rating) || 0, 9.9)
-      const { data, error } = await supabase
-        .from('posts')
-        .insert({
-          user_id:            currentUser.id,
-          tmdb_id:            postData.movie.id,
-          media_type:         postData.movie.mediaType     || 'movie',
-          title:              postData.movie.title,
-          poster_path:        postData.movie.posterPath    || null,
-          content:            postData.content.trim(),
-          rating:             safeRating,
-          backdrop_path:      postData.movie.backdropPath  || null,
-          overview:           postData.movie.overview      || null,
-          genres:             postData.movie.genres        || [],
-          runtime:            postData.movie.runtime       || null,
-          release_date:       postData.movie.releaseDate   || null,
-          year:               postData.movie.year          || null,
-          vote_average:       postData.movie.voteAverage   || null,
-          director:           postData.movie.director      || null,
-          cast_members:       postData.movie.cast          || [],
-          original_language:  postData.movie.originalLanguage || null,
-        })
-        .select().single()
+      const { data, error } = await supabase.from('posts').insert({
+        user_id:           currentUser.id,
+        tmdb_id:           postData.movie.id,
+        media_type:        postData.movie.mediaType   || 'movie',
+        title:             postData.movie.title,
+        poster_path:       postData.movie.posterPath  || null,
+        content:           postData.content.trim(),
+        rating:            safeRating,
+        backdrop_path:     postData.movie.backdropPath || null,
+        overview:          postData.movie.overview    || null,
+        genres:            postData.movie.genres      || [],
+        runtime:           postData.movie.runtime     || null,
+        release_date:      postData.movie.releaseDate || null,
+        year:              postData.movie.year        || null,
+        vote_average:      postData.movie.voteAverage || null,
+        director:          postData.movie.director    || null,
+        cast_members:      postData.movie.cast        || [],
+        original_language: postData.movie.originalLanguage || null,
+      }).select().single()
       if (error) throw error
 
       await Promise.allSettled([
         supabase.from('points_transactions').insert({
-          user_id: currentUser.id, points: 10,
-          reason: 'Created a review', reference_type: 'post', reference_id: data.id,
+          user_id: currentUser.id, points: 10, reason: 'Created a review',
+          reference_type: 'post', reference_id: data.id,
         }),
         supabase.from('activities').insert({
           user_id: currentUser.id, activity_type: 'review_posted',
@@ -358,9 +563,10 @@ const Home = () => {
   const handleListCreate = useCallback(async (listData) => {
     try {
       const { data: list, error: listError } = await supabase
-        .from('lists')
-        .insert({ user_id: currentUser.id, name: listData.name, description: listData.description || null, is_public: listData.isPublic, is_collaborative: listData.isCollaborative })
-        .select().single()
+        .from('lists').insert({
+          user_id: currentUser.id, name: listData.name,
+          description: listData.description || null, is_public: listData.isPublic, is_collaborative: listData.isCollaborative,
+        }).select().single()
       if (listError) throw listError
       if (listData.movies?.length) {
         const { error: itemsError } = await supabase.from('list_items').insert(
@@ -372,7 +578,6 @@ const Home = () => {
       setUserLists(prev => [...prev, { id: list.id, name: list.name, description: list.description, isPublic: list.is_public, itemCount: listData.movies.length, completedCount: 0 }])
       return { success: true }
     } catch (err) {
-      console.error('Error creating list:', err)
       return { success: false, error: err.message }
     }
   }, [currentUser])
@@ -392,16 +597,13 @@ const Home = () => {
     if (!query?.trim() || !TMDB_API_KEY) return []
     try {
       const res = await fetch(`https://api.themoviedb.org/3/search/multi?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(query.trim())}&include_adult=false&language=en-US&page=1`)
-      if (!res.ok) { console.error('[Flik\'d] TMDB', res.status, res.statusText); return [] }
+      if (!res.ok) return []
       const data = await res.json()
       return (data.results || [])
         .filter(i => i.media_type === 'movie' || i.media_type === 'tv')
         .slice(0, 10)
         .map(i => ({ id: i.id, title: i.title || i.name, year: i.release_date?.split('-')[0] || i.first_air_date?.split('-')[0] || 'N/A', mediaType: i.media_type, posterPath: i.poster_path, backdropPath: i.backdrop_path || null, overview: i.overview || null, voteAverage: i.vote_average || null, originalLanguage: i.original_language || null }))
-    } catch (err) {
-      console.error('[Flik\'d] handleMovieSearch:', err)
-      return []
-    }
+    } catch { return [] }
   }, [])
 
   const handleMovieDetails = useCallback(async (movie) => {
@@ -415,39 +617,38 @@ const Home = () => {
       const data = await res.json()
       return {
         ...movie,
-        backdropPath:        data.backdrop_path                                              || movie.backdropPath,
-        overview:            data.overview                                                   || movie.overview,
-        runtime:             data.runtime || data.episode_run_time?.[0]                     || null,
-        releaseDate:         data.release_date || data.first_air_date                        || null,
-        voteAverage:         data.vote_average                                               || movie.voteAverage,
+        backdropPath:        data.backdrop_path || movie.backdropPath,
+        overview:            data.overview      || movie.overview,
+        runtime:             data.runtime || data.episode_run_time?.[0] || null,
+        releaseDate:         data.release_date || data.first_air_date || null,
+        voteAverage:         data.vote_average || movie.voteAverage,
         director:            movie.mediaType === 'tv' ? data.created_by?.[0]?.name : data.credits?.crew?.find(c => c.job === 'Director')?.name || null,
-        cast:                data.credits?.cast?.slice(0, 8).map(c => c.name)               || [],
-        genres:              data.genres?.map(g => g.name)                                  || [],
-        originalLanguage:    data.original_language                                          || movie.originalLanguage,
-        status:              data.status                                                     || null,
-        productionCompanies: data.production_companies?.slice(0, 3).map(c => c.name)        || [],
+        cast:                data.credits?.cast?.slice(0, 8).map(c => c.name) || [],
+        genres:              data.genres?.map(g => g.name)                   || [],
+        originalLanguage:    data.original_language || movie.originalLanguage,
+        status:              data.status || null,
+        productionCompanies: data.production_companies?.slice(0, 3).map(c => c.name) || [],
       }
     } catch { return movie }
   }, [])
 
-  /* ── Loading ── */
+  /* ── Loading screen ── */
   if (loading) {
     return (
       <div className='min-h-screen bg-[#0A0A0A] flex items-center justify-center'>
         <div className='text-center'>
-          <div className='relative w-20 h-20 mx-auto mb-5'>
-            <svg className='animate-spin w-20 h-20 text-[#D4AF37]/20' fill='none' viewBox='0 0 24 24'>
+          <div className='relative w-16 h-16 mx-auto mb-4'>
+            <svg className='animate-spin w-16 h-16 text-[#D4AF37]/20' fill='none' viewBox='0 0 24 24'>
               <circle cx='12' cy='12' r='10' stroke='currentColor' strokeWidth='1.5' />
             </svg>
-            <svg className='animate-spin w-20 h-20 text-[#D4AF37] absolute inset-0' fill='none' viewBox='0 0 24 24'
-              style={{ animationDuration: '1.2s' }}>
+            <svg className='animate-spin w-16 h-16 text-[#D4AF37] absolute inset-0' fill='none' viewBox='0 0 24 24' style={{ animationDuration: '1.2s' }}>
               <path fill='currentColor' d='M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z' opacity='.8' />
             </svg>
           </div>
-          <h2 style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '28px', letterSpacing: '0.12em', color: '#D4AF37' }}>
+          <h2 style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '24px', letterSpacing: '0.12em', color: '#D4AF37' }}>
             LOADING FLIK'D
           </h2>
-          <p style={{ fontFamily: "'DM Sans', sans-serif", color: 'rgba(255,255,255,0.25)', fontSize: '13px', marginTop: '6px' }}>
+          <p style={{ fontFamily: "'DM Sans', sans-serif", color: 'rgba(255,255,255,0.25)', fontSize: '12px', marginTop: '4px' }}>
             Curating your cinema feed…
           </p>
         </div>
@@ -458,19 +659,11 @@ const Home = () => {
   if (error && !currentUser) {
     return (
       <div className='min-h-screen bg-[#0A0A0A] flex items-center justify-center p-4'>
-        <div className='text-center max-w-md'>
-          <div className='w-20 h-20 bg-red-500/8 border border-red-500/20 rounded-full flex items-center justify-center mx-auto mb-6'>
-            <svg className='w-9 h-9 text-red-500/70' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
-              <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={1.5} d='M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z' />
-            </svg>
-          </div>
-          <h2 style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '32px', letterSpacing: '0.08em', color: '#fff', marginBottom: '8px' }}>
-            ERROR
-          </h2>
-          <p style={{ fontFamily: "'DM Sans', sans-serif", color: 'rgba(255,255,255,0.45)', fontSize: '14px', marginBottom: '24px' }}>{error}</p>
+        <div className='text-center'>
+          <p style={{ fontFamily: "'DM Sans', sans-serif", color: 'rgba(255,255,255,0.45)', fontSize: '14px', marginBottom: '20px' }}>{error}</p>
           <button onClick={() => window.location.reload()}
-            className='px-8 py-3 rounded-full text-[#0A0A0A] font-bold transition-all duration-200 hover:scale-105 active:scale-95'
-            style={{ background: 'linear-gradient(135deg, #D4AF37, #F0C93A)', fontFamily: "'Bebas Neue', sans-serif", fontSize: '15px', letterSpacing: '0.08em' }}>
+            className='px-6 py-2.5 rounded-full text-[#0A0A0A] font-bold'
+            style={{ background: 'linear-gradient(135deg, #D4AF37, #F0C93A)', fontFamily: "'Bebas Neue', sans-serif", fontSize: '14px', letterSpacing: '0.08em' }}>
             RETRY
           </button>
         </div>
@@ -478,256 +671,35 @@ const Home = () => {
     )
   }
 
-  /* ── Main render ── */
   return (
-    <div className='min-h-screen bg-[#0A0A0A]' style={{ fontFamily: "'DM Sans', sans-serif" }}>
-      <Navbar currentUser={currentUser} />
+    <ListProgressProvider userId={currentUser?.id}>
+      <div className='min-h-screen bg-[#0A0A0A]' style={{ fontFamily: "'DM Sans', sans-serif" }}>
+        <Navbar currentUser={currentUser} />
+        <main ref={mainRef} className='ml-20 lg:ml-72 h-screen overflow-y-auto'
+          style={{ scrollbarWidth: 'thin', scrollbarColor: '#1A1A1A transparent' }}>
+          <HomeInner
+            currentUser={currentUser}
+            posts={posts}
+            postsLoading={postsLoading}
+            userLists={userLists}
+            recentActivities={recentActivities}
+            handlePostCreate={handlePostCreate}
+            handleListCreate={handleListCreate}
+            handleListItemAdd={handleListItemAdd}
+            handleMovieSearch={handleMovieSearch}
+            handleMovieDetails={handleMovieDetails}
+            mainRef={mainRef}
+            scrolled={scrolled}
+            showScrollTop={showScrollTop}
+          />
+        </main>
 
-      <main ref={mainRef} className='ml-20 lg:ml-72 h-screen overflow-y-auto'
-        style={{ scrollbarWidth: 'thin', scrollbarColor: '#1A1A1A transparent' }}>
-        <div className='flex gap-0 xl:gap-6 2xl:gap-8 px-0 xl:px-4 2xl:px-6'>
-
-          {/* ══════════ MAIN FEED ══════════ */}
-          <div className='flex-1 min-w-0 border-x border-[#151515] relative'>
-
-            {/* ── Sticky header ── */}
-            <div className={`sticky top-0 z-40 transition-all duration-300
-              ${scrolled
-                ? 'bg-[#0A0A0A]/96 backdrop-blur-xl border-b border-[#1A1A1A] shadow-[0_8px_32px_rgba(0,0,0,.6)]'
-                : 'bg-[#0A0A0A] border-b border-[#141414]'
-              }`}>
-
-              {/* Gold ambient glow when scrolled */}
-              {scrolled && (
-                <div className='absolute inset-x-0 bottom-0 h-px'
-                  style={{ background: 'linear-gradient(90deg, transparent, rgba(212,175,55,0.15) 50%, transparent)' }} />
-              )}
-
-              {/* Top row */}
-              <div className='px-6 pt-4 pb-2 flex items-center justify-between'>
-                <h1 style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '28px', letterSpacing: '0.1em', color: '#fff' }}>
-                  HOME
-                </h1>
-                {currentUser && (
-                  <div className='flex items-center gap-2.5'>
-                    {/* XP pill */}
-                    <div className='flex items-center gap-1.5 px-3 py-1.5 bg-[#141414]
-                      border border-[#222] rounded-full hover:border-[#D4AF37]/25 transition-colors duration-200'>
-                      <svg className='w-3.5 h-3.5 text-[#D4AF37]' fill='currentColor' viewBox='0 0 20 20'>
-                        <path d='M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z' />
-                      </svg>
-                      <span className='font-bold text-white text-[13px] tabular-nums'
-                        style={{ fontFamily: "'Bebas Neue', sans-serif", letterSpacing: '0.04em' }}>
-                        {currentUser.totalPoints.toLocaleString()}
-                      </span>
-                    </div>
-                    {/* Level pill */}
-                    <div className='px-3 py-1.5 rounded-full text-[#0A0A0A] font-black text-[13px]'
-                      style={{ background: 'linear-gradient(135deg, #D4AF37, #F0C93A)', fontFamily: "'Bebas Neue', sans-serif", letterSpacing: '0.08em' }}>
-                      LVL {currentUser.level}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Feed tab bar */}
-              <div className='flex px-4 pb-0 gap-0 border-t border-[#111]'>
-                {FEED_TABS.map(tab => (
-                  <button key={tab.id} onClick={() => setFeedTab(tab.id)}
-                    className={`flex items-center gap-1.5 px-4 py-3 text-[12px] font-bold
-                      border-b-2 -mb-px transition-all duration-200 whitespace-nowrap
-                      ${feedTab === tab.id
-                        ? 'text-[#D4AF37] border-[#D4AF37]'
-                        : 'text-white/30 border-transparent hover:text-white/60 hover:border-white/10'
-                      }`}
-                    style={{ fontFamily: "'Bebas Neue', sans-serif", letterSpacing: '0.08em', fontSize: '13px' }}>
-                    <span style={{ transition: 'transform .2s', transform: feedTab === tab.id ? 'scale(1.2)' : 'scale(1)' }}>
-                      {tab.icon}
-                    </span>
-                    {tab.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* ── Create Post ── */}
-            <div className='border-b border-[#141414]'>
-              <CreatePost
-                currentUser={currentUser}
-                onPostCreate={handlePostCreate}
-                onListCreate={handleListCreate}
-                onListItemAdd={handleListItemAdd}
-                onMovieSearch={handleMovieSearch}
-                onMovieDetails={handleMovieDetails}
-                userLists={userLists}
-              />
-            </div>
-
-            {/* ── Feed ── */}
-            <div className='pb-32'>
-              {postsLoading
-                ? [0, 1, 2].map(i => <PostSkeleton key={i} delay={i * 80} />)
-                : posts.length > 0
-                  ? posts.map((post, index) => (
-                      <Post
-                        key={post.id}
-                        post={post}
-                        currentUserId={currentUser?.id}
-                        onUserClick={(u) => console.log('User clicked:', u)}
-                        style={{ animation: `postReveal .4s ease-out ${Math.min(index * 0.045, 0.5)}s both` }}
-                      />
-                    ))
-                  : (
-                    /* ── Empty state ── */
-                    <div className='flex flex-col items-center justify-center py-28 px-8'>
-                      {/* Cinematic film-reel illustration */}
-                      <div className='relative w-24 h-24 mb-8'>
-                        <div className='w-24 h-24 rounded-full border-2 border-[#1E1E1E] flex items-center justify-center'
-                          style={{ background: 'radial-gradient(circle, rgba(212,175,55,0.05), transparent)' }}>
-                          <svg className='w-10 h-10 text-[#D4AF37]/20' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
-                            <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={1.2}
-                              d='M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z' />
-                          </svg>
-                        </div>
-                        {/* Gold orbit */}
-                        <div className='absolute inset-0 rounded-full border border-[#D4AF37]/10 animate-ping'
-                          style={{ animationDuration: '3s' }} />
-                      </div>
-                      <h3 style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '26px', letterSpacing: '0.1em', color: '#fff', marginBottom: '10px' }}>
-                        NO REVIEWS YET
-                      </h3>
-                      <p style={{ fontFamily: "'DM Sans', sans-serif", color: 'rgba(255,255,255,0.3)', fontSize: '14px', textAlign: 'center', maxWidth: '280px', lineHeight: '1.6' }}>
-                        Be the first to share your thoughts on a film or series.
-                      </p>
-                      <div className='mt-6 flex items-center gap-2 text-[11px] text-white/15'>
-                        <span>★</span>
-                        <span style={{ fontFamily: "'DM Sans', sans-serif" }}>Write a review above to get started</span>
-                        <span>★</span>
-                      </div>
-                    </div>
-                  )
-              }
-            </div>
-
-            {/* ── Scroll to top ── */}
-            {showScrollTop && (
-              <button
-                onClick={() => mainRef.current?.scrollTo({ top: 0, behavior: 'smooth' })}
-                className='fixed bottom-8 right-8 z-50 flex items-center gap-2 px-4 py-2.5 rounded-full
-                  border border-[#D4AF37]/30 shadow-2xl shadow-black/60
-                  hover:border-[#D4AF37]/60 hover:scale-105 active:scale-95 transition-all duration-200'
-                style={{
-                  background: 'linear-gradient(135deg, #0E0E0E, #141414)',
-                  animation: 'scrollTopIn .2s ease-out',
-                }}>
-                <svg className='w-4 h-4 text-[#D4AF37]' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
-                  <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M5 10l7-7m0 0l7 7m-7-7v18' />
-                </svg>
-                <span className='text-[#D4AF37] text-[11px] font-black'
-                  style={{ fontFamily: "'Bebas Neue', sans-serif", letterSpacing: '0.08em' }}>
-                  TOP
-                </span>
-              </button>
-            )}
-          </div>
-
-          {/* ══════════ SIDEBAR ══════════ */}
-          <aside className='hidden xl:flex flex-col w-72 2xl:w-80 flex-shrink-0
-            sticky top-0 h-screen overflow-y-auto py-5 space-y-4 pr-1'
-            style={{ scrollbarWidth: 'none' }}>
-
-            {/* ── Profile mini-card ── */}
-            {currentUser && (
-              <div className='rounded-2xl border border-[#181818] bg-[#0D0D0D] overflow-hidden'>
-                {/* Gold bar */}
-                <div className='h-1'
-                  style={{ background: 'linear-gradient(90deg, transparent, #D4AF37 30%, #F0C93A 50%, #D4AF37 70%, transparent)' }} />
-                <div className='p-4'>
-                  <div className='flex items-center gap-3 mb-4'>
-                    <div className='w-11 h-11 rounded-full overflow-hidden ring-2 ring-[#D4AF37]/20 flex-shrink-0'>
-                      {currentUser.avatar
-                        ? <img src={currentUser.avatar} alt={currentUser.displayName} className='w-full h-full object-cover' />
-                        : <div className='w-full h-full flex items-center justify-center text-[#0A0A0A] font-black'
-                            style={{ background: 'linear-gradient(135deg, #D4AF37, #F0C93A)', fontFamily: "'Bebas Neue', sans-serif", fontSize: '16px' }}>
-                            {currentUser.displayName?.[0]?.toUpperCase() || 'U'}
-                          </div>
-                      }
-                    </div>
-                    <div className='flex-1 min-w-0'>
-                      <p className='text-white font-semibold text-[14px] truncate' style={{ fontFamily: "'DM Sans', sans-serif" }}>
-                        {currentUser.displayName}
-                      </p>
-                      {currentUser.username && (
-                        <p className='text-[11px] text-white/30' style={{ fontFamily: "'DM Sans', sans-serif" }}>
-                          @{currentUser.username}
-                        </p>
-                      )}
-                    </div>
-                    <div className='px-2.5 py-1 rounded-full flex-shrink-0 text-[#0A0A0A] font-black text-[11px]'
-                      style={{ background: 'linear-gradient(135deg, #D4AF37, #F0C93A)', fontFamily: "'Bebas Neue', sans-serif", letterSpacing: '0.08em' }}>
-                      LVL {currentUser.level}
-                    </div>
-                  </div>
-
-                  {/* Stats */}
-                  <div className='grid grid-cols-3 gap-2'>
-                    {[
-                      ['Watched', currentUser.watchedCount || 0],
-                      ['Reviews', currentUser.reviewCount  || posts.filter(p => p.userId === currentUser.id).length],
-                      ['Lists',   userLists.length],
-                    ].map(([label, val]) => (
-                      <div key={label} className='text-center py-2.5 rounded-xl border border-[#1A1A1A]
-                        bg-[#0A0A0A] hover:border-[#D4AF37]/20 transition-colors duration-200 cursor-pointer'>
-                        <p className='leading-none mb-1'
-                          style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '20px', color: '#D4AF37', letterSpacing: '0.04em' }}>
-                          {val}
-                        </p>
-                        <p className='text-[9px] font-black text-white/25 uppercase tracking-widest'
-                          style={{ fontFamily: "'Bebas Neue', sans-serif" }}>
-                          {label}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* ── Activity stats ── */}
-            {currentUser && (
-              <div className='space-y-2'>
-                <p className='text-[9px] font-black text-white/20 uppercase tracking-[0.18em] px-1 mb-2'
-                  style={{ fontFamily: "'Bebas Neue', sans-serif" }}>
-                  Your Activity
-                </p>
-                <StatCard icon='🔥' label='Day Streak'    value={currentUser.streak || 0} sub='Keep it going!' />
-                <StatCard icon='⭐' label='Total XP'      value={(currentUser.totalPoints || 0).toLocaleString()} />
-                <StatCard icon='✅' label='Lists Completed' value={userLists.filter(l => l.itemCount > 0 && l.completedCount >= l.itemCount).length} />
-              </div>
-            )}
-
-            {/* ── Watchlists ── */}
-            <CurrentListTab
-              lists={userLists}
-              userId={currentUser?.id}
-              onListClick={(list) => console.log('List:', list)}
-              onViewAll={() => console.log('View all')}
-            />
-
-            {/* ── Recent activity ── */}
-            <RecentActivity
-              activities={recentActivities}
-              onActivityClick={(a) => console.log('Activity:', a)}
-            />
-          </aside>
-        </div>
-      </main>
-
-      <style>{`
-        @keyframes postReveal   { from { opacity:0; transform:translateY(14px) } to { opacity:1; transform:translateY(0) } }
-        @keyframes scrollTopIn  { from { opacity:0; transform:translateY(8px)  } to { opacity:1; transform:translateY(0) } }
-      `}</style>
-    </div>
+        <style>{`
+          @keyframes postReveal   { from { opacity:0; transform:translateY(14px) } to { opacity:1; transform:translateY(0) } }
+          @keyframes scrollTopIn  { from { opacity:0; transform:translateY(8px)  } to { opacity:1; transform:translateY(0) } }
+        `}</style>
+      </div>
+    </ListProgressProvider>
   )
 }
 
