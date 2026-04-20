@@ -18,6 +18,7 @@ if (typeof document !== 'undefined' && !document.getElementById('flikd-fonts')) 
 }
 
 const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY
+const PAGE_SIZE = 20
 
 /* ─── Skeleton ──────────────────────────────────────────────── */
 const PostSkeleton = ({ delay = 0 }) => (
@@ -96,16 +97,46 @@ const FEED_TABS = [
   { id: 'new',       label: 'New Releases', icon: '🎬' },
 ]
 
-/* ─── Inner home (needs list context) ──────────────────────────*/
-const HomeInner = ({ currentUser, posts, postsLoading, userLists,
-  recentActivities, handlePostCreate, handleListCreate,
-  handleListItemAdd, handleMovieSearch, handleMovieDetails,
-  mainRef, scrolled, showScrollTop }) => {
+/* ─── End of feed indicator ─────────────────────────────────── */
+const EndOfFeed = () => (
+  <div className='flex flex-col items-center justify-center py-16 px-8'>
+    <div className='w-12 h-12 rounded-full border border-[#1E1E1E] flex items-center justify-center mb-4'
+      style={{ background: 'radial-gradient(circle, rgba(212,175,55,0.05), transparent)' }}>
+      <svg className='w-5 h-5 text-[#D4AF37]/20' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+        <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={1.2}
+          d='M5 13l4 4L19 7' />
+      </svg>
+    </div>
+    <p className='text-white/20 text-xs text-center' style={{ fontFamily: "'DM Sans', sans-serif" }}>
+      You're all caught up
+    </p>
+  </div>
+)
 
+/* ─── Load more spinner ──────────────────────────────────────── */
+const LoadMoreSpinner = () => (
+  <div className='flex justify-center items-center gap-2 py-8'>
+    <svg className='animate-spin w-5 h-5 text-[#D4AF37]/40' fill='none' viewBox='0 0 24 24'>
+      <circle cx='12' cy='12' r='10' stroke='currentColor' strokeWidth='2' className='opacity-20' />
+      <path fill='currentColor' className='opacity-80' d='M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z' />
+    </svg>
+    <span className='text-white/25 text-xs' style={{ fontFamily: "'DM Sans', sans-serif" }}>
+      Loading more…
+    </span>
+  </div>
+)
+
+/* ─── Inner home (needs list context) ──────────────────────────*/
+const HomeInner = ({
+  currentUser, posts, postsLoading, loadingMore, hasMore,
+  userLists, recentActivities,
+  handlePostCreate, handleListCreate, handleListItemAdd,
+  handleMovieSearch, handleMovieDetails,
+  mainRef, scrolled, showScrollTop, sentinelRef,
+}) => {
   const [feedTab, setFeedTab] = useState('foryou')
   const { lists, updateProgress } = useListProgress()
 
-  // Merge external userLists with context lists (context is source of truth after first load)
   const displayLists = lists.length > 0 ? lists : userLists
 
   return (
@@ -124,7 +155,7 @@ const HomeInner = ({ currentUser, posts, postsLoading, userLists,
             <div className='absolute inset-x-0 bottom-0 h-px'
               style={{ background: 'linear-gradient(90deg, transparent, rgba(212,175,55,0.15) 50%, transparent)' }} />
           )}
-          <div className='px-5 pt-4 pb-2 flex items-center justify-between'>
+          <div className='px-4 sm:px-5 pt-4 pb-2 flex items-center justify-between'>
             <h1 style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '26px', letterSpacing: '0.1em', color: '#fff' }}>
               HOME
             </h1>
@@ -147,11 +178,14 @@ const HomeInner = ({ currentUser, posts, postsLoading, userLists,
               </div>
             )}
           </div>
-          <div className='flex px-3 pb-0 gap-0 border-t border-[#111]'>
+
+          {/* Feed tabs */}
+          <div className='flex px-3 pb-0 gap-0 border-t border-[#111] overflow-x-auto'
+            style={{ scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch' }}>
             {FEED_TABS.map(tab => (
               <button key={tab.id} onClick={() => setFeedTab(tab.id)}
-                className={`flex items-center gap-1.5 px-4 py-3 text-[11px] font-bold border-b-2 -mb-px
-                  transition-all duration-200 whitespace-nowrap
+                className={`flex items-center gap-1.5 px-3 sm:px-4 py-3 border-b-2 -mb-px
+                  transition-all duration-200 whitespace-nowrap flex-shrink-0
                   ${feedTab === tab.id
                     ? 'text-[#D4AF37] border-[#D4AF37]'
                     : 'text-white/30 border-transparent hover:text-white/60 hover:border-white/10'
@@ -180,19 +214,35 @@ const HomeInner = ({ currentUser, posts, postsLoading, userLists,
         </div>
 
         {/* ── Feed ── */}
-        <div className='pb-32'>
+        <div>
           {postsLoading
             ? [0, 1, 2].map(i => <PostSkeleton key={i} delay={i * 80} />)
             : posts.length > 0
-              ? posts.map((post, index) => (
-                  <Post
-                    key={post.id}
-                    post={post}
-                    currentUserId={currentUser?.id}
-                    onUserClick={(u) => console.log('User clicked:', u)}
-                    style={{ animation: `postReveal .4s ease-out ${Math.min(index * 0.045, 0.5)}s both` }}
-                  />
-                ))
+              ? (
+                <>
+                  {posts.map((post, index) => (
+                    <Post
+                      key={post.id}
+                      post={post}
+                      currentUserId={currentUser?.id}
+                      onUserClick={(u) => console.log('User clicked:', u)}
+                      style={{ animation: `postReveal .4s ease-out ${Math.min(index * 0.045, 0.5)}s both` }}
+                    />
+                  ))}
+
+                  {/* Infinite scroll sentinel */}
+                  <div ref={sentinelRef} className='h-1' />
+
+                  {/* Load more indicator */}
+                  {loadingMore && <LoadMoreSpinner />}
+
+                  {/* End of feed */}
+                  {!hasMore && !loadingMore && <EndOfFeed />}
+
+                  {/* Bottom padding for mobile nav */}
+                  <div className='h-4 lg:h-0' />
+                </>
+              )
               : (
                 <div className='flex flex-col items-center justify-center py-28 px-8'>
                   <div className='relative w-20 h-20 mb-8'>
@@ -221,7 +271,7 @@ const HomeInner = ({ currentUser, posts, postsLoading, userLists,
         {showScrollTop && (
           <button
             onClick={() => mainRef.current?.scrollTo({ top: 0, behavior: 'smooth' })}
-            className='fixed bottom-8 right-8 z-50 flex items-center gap-2 px-4 py-2.5 rounded-full
+            className='fixed bottom-24 lg:bottom-8 right-4 lg:right-8 z-50 flex items-center gap-2 px-4 py-2.5 rounded-full
               border border-[#D4AF37]/30 shadow-2xl shadow-black/60
               hover:border-[#D4AF37]/60 hover:scale-105 active:scale-95 transition-all duration-200'
             style={{ background: 'linear-gradient(135deg, #0E0E0E, #141414)', animation: 'scrollTopIn .2s ease-out' }}>
@@ -302,7 +352,7 @@ const HomeInner = ({ currentUser, posts, postsLoading, userLists,
           </div>
         )}
 
-        {/* ── Lists (synced via context) ── */}
+        {/* ── Lists ── */}
         <CurrentListTab
           lists={displayLists}
           userId={currentUser?.id}
@@ -329,11 +379,16 @@ const Home = () => {
   const [recentActivities, setRecentActivities] = useState([])
   const [loading,          setLoading]          = useState(true)
   const [postsLoading,     setPostsLoading]     = useState(true)
+  const [loadingMore,      setLoadingMore]      = useState(false)
+  const [hasMore,          setHasMore]          = useState(true)
+  const [page,             setPage]             = useState(0)
   const [error,            setError]            = useState(null)
   const [scrolled,         setScrolled]         = useState(false)
   const [showScrollTop,    setShowScrollTop]    = useState(false)
-  const mainRef = useRef(null)
+  const mainRef    = useRef(null)
+  const sentinelRef = useRef(null)
 
+  /* ── Scroll listener ── */
   useEffect(() => {
     const el = mainRef.current
     if (!el) return
@@ -379,76 +434,124 @@ const Home = () => {
     fetchUser()
   }, [])
 
-  /* ── Posts ── */
-  useEffect(() => {
-    const fetchPosts = async () => {
-      if (!currentUser) return
-      setPostsLoading(true)
-      try {
-        const { data, error } = await supabase
-          .from('posts')
-          .select(`*, profiles:user_id(id, username, display_name, avatar_url, level)`)
-          .order('created_at', { ascending: false })
-          .limit(50)
-        if (error) throw error
+  /* ── Map raw Supabase post to UI shape ── */
+  const mapPost = useCallback((post, likedSet, dislikedSet) => ({
+    id:       post.id,
+    userId:   post.user_id,
+    user: {
+      id:          post.profiles?.id || post.user_id,
+      username:    post.profiles?.username    || 'unknown',
+      displayName: post.profiles?.display_name || 'User',
+      avatar:      post.profiles?.avatar_url   || null,
+      level:       post.profiles?.level        || 1,
+    },
+    movie: {
+      id:                  post.tmdb_id,
+      title:               post.title,
+      posterPath:          post.poster_path,
+      backdropPath:        post.backdrop_path          || null,
+      mediaType:           post.media_type             || 'movie',
+      overview:            post.overview               || null,
+      genres:              post.genres                 || [],
+      runtime:             post.runtime                || null,
+      releaseDate:         post.release_date           || null,
+      year:                post.year                   || null,
+      voteAverage:         post.vote_average           || null,
+      director:            post.director               || null,
+      cast:                post.cast_members           || [],
+      originalLanguage:    post.original_language      || null,
+    },
+    content:      post.content,
+    rating:       post.rating,
+    timestamp:    post.created_at,
+    likes:        post.likes_count    || 0,
+    dislikes:     post.dislikes_count || 0,
+    reposts:      post.reposts_count  || 0,
+    comments:     post.comments_count || 0,
+    userLiked:    likedSet  ? likedSet.has(post.id)    : false,
+    userDisliked: dislikedSet ? dislikedSet.has(post.id) : false,
+    userReposted: false,
+    type:         'review',
+  }), [])
 
-        // Fetch which posts the current user liked/disliked
-        const postIds = (data || []).map(p => p.id)
+  /* ── Fetch a page of posts ── */
+  const fetchPosts = useCallback(async (pageNum, userId) => {
+    const isFirst = pageNum === 0
+    if (isFirst) setPostsLoading(true)
+    else setLoadingMore(true)
+
+    try {
+      const from = pageNum * PAGE_SIZE
+      const to   = from + PAGE_SIZE - 1
+
+      const { data, error } = await supabase
+        .from('posts')
+        .select(`*, profiles:user_id(id, username, display_name, avatar_url, level)`)
+        .order('created_at', { ascending: false })
+        .range(from, to)
+
+      if (error) throw error
+
+      const rows = data || []
+
+      // If we got fewer rows than a full page, no more pages exist
+      if (rows.length < PAGE_SIZE) setHasMore(false)
+
+      // Fetch like/dislike state only on first page load (perf optimisation)
+      let likedSet    = null
+      let dislikedSet = null
+      if (isFirst && userId) {
+        const postIds = rows.map(p => p.id)
         const [likesRes, dislikesRes] = await Promise.allSettled([
-          supabase.from('post_likes').select('post_id').eq('user_id', currentUser.id).in('post_id', postIds),
-          supabase.from('post_dislikes').select('post_id').eq('user_id', currentUser.id).in('post_id', postIds),
+          supabase.from('post_likes').select('post_id').eq('user_id', userId).in('post_id', postIds),
+          supabase.from('post_dislikes').select('post_id').eq('user_id', userId).in('post_id', postIds),
         ])
-        const likedSet    = new Set((likesRes.value?.data    || []).map(r => r.post_id))
-        const dislikedSet = new Set((dislikesRes.value?.data || []).map(r => r.post_id))
-
-        setPosts((data || []).map(post => ({
-          id:       post.id,
-          userId:   post.user_id,
-          user: {
-            id:          post.profiles?.id || post.user_id,
-            username:    post.profiles?.username    || 'unknown',
-            displayName: post.profiles?.display_name || 'User',
-            avatar:      post.profiles?.avatar_url   || null,
-            level:       post.profiles?.level        || 1,
-          },
-          movie: {
-            id:                  post.tmdb_id,
-            title:               post.title,
-            posterPath:          post.poster_path,
-            backdropPath:        post.backdrop_path          || null,
-            mediaType:           post.media_type             || 'movie',
-            overview:            post.overview               || null,
-            genres:              post.genres                 || [],
-            runtime:             post.runtime                || null,
-            releaseDate:         post.release_date           || null,
-            year:                post.year                   || null,
-            voteAverage:         post.vote_average           || null,
-            director:            post.director               || null,
-            cast:                post.cast_members           || [],
-            originalLanguage:    post.original_language      || null,
-          },
-          content:      post.content,
-          rating:       post.rating,
-          timestamp:    post.created_at,
-          likes:        post.likes_count    || 0,
-          dislikes:     post.dislikes_count || 0,
-          reposts:      post.reposts_count  || 0,
-          comments:     post.comments_count || 0,
-          userLiked:    likedSet.has(post.id),
-          userDisliked: dislikedSet.has(post.id),
-          userReposted: false,
-          type:         'review',
-        })))
-      } catch (err) {
-        console.error('Error fetching posts:', err)
-      } finally {
-        setPostsLoading(false)
+        likedSet    = new Set((likesRes.value?.data    || []).map(r => r.post_id))
+        dislikedSet = new Set((dislikesRes.value?.data || []).map(r => r.post_id))
       }
-    }
-    fetchPosts()
-  }, [currentUser])
 
-  /* ── Lists (for context seed) ── */
+      const mapped = rows.map(post => mapPost(post, likedSet, dislikedSet))
+
+      setPosts(prev => isFirst ? mapped : [...prev, ...mapped])
+      setPage(pageNum)
+    } catch (err) {
+      console.error('Error fetching posts:', err)
+    } finally {
+      if (isFirst) setPostsLoading(false)
+      else setLoadingMore(false)
+    }
+  }, [mapPost])
+
+  /* ── Initial posts load (waits for currentUser) ── */
+  useEffect(() => {
+    if (!currentUser) return
+    fetchPosts(0, currentUser.id)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.id])
+
+  /* ── IntersectionObserver for infinite scroll ── */
+  useEffect(() => {
+    const sentinel = sentinelRef.current
+    if (!sentinel || !hasMore || loadingMore || postsLoading) return
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          fetchPosts(page + 1, currentUser?.id)
+        }
+      },
+      {
+        root: mainRef.current,   // scroll container
+        rootMargin: '300px',     // trigger 300px before hitting the bottom
+        threshold: 0,
+      }
+    )
+
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+  }, [sentinelRef, hasMore, loadingMore, postsLoading, page, fetchPosts, currentUser?.id])
+
+  /* ── Lists ── */
   useEffect(() => {
     const fetchUserLists = async () => {
       if (!currentUser) return
@@ -675,12 +778,29 @@ const Home = () => {
     <ListProgressProvider userId={currentUser?.id}>
       <div className='min-h-screen bg-[#0A0A0A]' style={{ fontFamily: "'DM Sans', sans-serif" }}>
         <Navbar currentUser={currentUser} />
-        <main ref={mainRef} className='ml-20 lg:ml-72 h-screen overflow-y-auto'
-          style={{ scrollbarWidth: 'thin', scrollbarColor: '#1A1A1A transparent' }}>
+
+        {/*
+          ml-0 on mobile (no sidebar), ml-20 on collapsed desktop, ml-72 on expanded desktop.
+          pt-[57px] offsets the fixed mobile top bar (≈57px tall).
+          pb-[calc(env(safe-area-inset-bottom)+72px)] gives clearance above the mobile bottom nav.
+          On lg+ the bottom nav is hidden so we remove that padding.
+        */}
+        <main
+          ref={mainRef}
+          className='
+            ml-0 lg:ml-20 xl:ml-72
+            h-screen overflow-y-auto
+            pt-[57px] lg:pt-0
+            pb-[calc(env(safe-area-inset-bottom,0px)+72px)] lg:pb-0
+          '
+          style={{ scrollbarWidth: 'thin', scrollbarColor: '#1A1A1A transparent', WebkitOverflowScrolling: 'touch' }}
+        >
           <HomeInner
             currentUser={currentUser}
             posts={posts}
             postsLoading={postsLoading}
+            loadingMore={loadingMore}
+            hasMore={hasMore}
             userLists={userLists}
             recentActivities={recentActivities}
             handlePostCreate={handlePostCreate}
@@ -691,6 +811,7 @@ const Home = () => {
             mainRef={mainRef}
             scrolled={scrolled}
             showScrollTop={showScrollTop}
+            sentinelRef={sentinelRef}
           />
         </main>
 

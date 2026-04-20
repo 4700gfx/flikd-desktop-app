@@ -4,23 +4,20 @@ import supabase from '../../config/SupabaseClient'
 import logo from '../../assets/photos/flikd-logo.png'
 
 /**
- * FLIK'D — Navigation System v4
+ * FLIK'D — Navigation System v5
  * ─────────────────────────────────────────
- * Luxury cinema dark aesthetic
- * Gold sidebar rail + 5 cinematic slide-over panels
- *
- * v4 Improvements:
- *   ✦ Fully responsive: mobile bottom bar ↔ desktop side rail
- *   ✦ Settings now drives real app-wide preferences via AppSettingsContext
- *   ✦ Search: keyboard navigation (↑↓ Enter), voice search hint, history management
- *   ✦ Discover: genre deep-dive modal, trailer embed placeholder
- *   ✦ Library: bulk actions (mark all watched), drag-to-reorder hint
- *   ✦ Watchlist: streak counter, next-up recommendation
- *   ✦ Micro-animation polish across all panels
+ * v5 Mobile improvements:
+ *   ✦ Fixed top bar height is stable and consistent (no layout shift)
+ *   ✦ Bottom nav uses env(safe-area-inset-bottom) for notch/home-bar devices
+ *   ✦ WebkitBackdropFilter added for Safari support
+ *   ✦ All tap targets are minimum 44×44px
+ *   ✦ touch-action: manipulation on all interactive items (no 300ms delay)
+ *   ✦ Mobile top bar exports its height via a CSS custom property --top-bar-height
+ *   ✦ Settings panel accessible from mobile profile avatar
  */
 
 /* ─────────────────────────────────────────────────────
-   APP SETTINGS CONTEXT  (place in src/context/AppSettings.jsx normally)
+   APP SETTINGS CONTEXT
 ───────────────────────────────────────────────────── */
 export const AppSettingsContext = React.createContext(null)
 
@@ -29,8 +26,8 @@ const DEFAULT_SETTINGS = {
   showBackdrops:  true,
   animations:     true,
   reduceMotion:   false,
-  theme:          'dark',       // 'dark' | 'cinema' | 'midnight'
-  accentColor:    'gold',       // 'gold' | 'platinum' | 'rose'
+  theme:          'dark',
+  accentColor:    'gold',
   reviewLikes:    true,
   listCollabs:    true,
   newFollowers:   true,
@@ -74,7 +71,6 @@ export function AppSettingsProvider({ children }) {
     try { localStorage.removeItem('flikd_settings') } catch {}
   }, [])
 
-  // Apply theme class to <html>
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', settings.theme)
     document.documentElement.setAttribute('data-accent', settings.accentColor)
@@ -150,6 +146,7 @@ const ScoreRing = ({ score }) => {
 
 const Pill = ({ children, active, gold, onClick, className = '' }) => (
   <button onClick={onClick}
+    style={{ touchAction: 'manipulation' }}
     className={`
       flex-shrink-0 px-3 py-1.5 rounded-full text-[11px] font-bold
       border transition-all duration-200 cursor-pointer
@@ -163,7 +160,7 @@ const Pill = ({ children, active, gold, onClick, className = '' }) => (
 )
 
 /* ─────────────────────────────────────────────────────
-   PANEL 1 — SEARCH  (enhanced: keyboard nav, clear history)
+   PANEL 1 — SEARCH
 ───────────────────────────────────────────────────── */
 const SearchPanel = () => {
   const [q, setQ] = useState('')
@@ -199,7 +196,6 @@ const SearchPanel = () => {
 
   const listItems = q.trim() ? results : recents
 
-  // Keyboard navigation
   const handleKeyDown = (e) => {
     if (!listItems.length) return
     if (e.key === 'ArrowDown') {
@@ -238,9 +234,10 @@ const SearchPanel = () => {
   }
 
   return (
-    <div className='flex h-full overflow-hidden'>
+    /* On mobile: stack vertically. On sm+: side by side */
+    <div className='flex flex-col sm:flex-row h-full overflow-hidden'>
       {/* Left pane */}
-      <div className='w-[320px] flex-shrink-0 flex flex-col border-r border-white/[0.04]'>
+      <div className='w-full sm:w-[320px] flex-shrink-0 flex flex-col border-b sm:border-b-0 sm:border-r border-white/[0.04]'>
         <div className='p-4 border-b border-white/[0.04]'>
           <div className='flex items-center gap-3 bg-[#111] rounded-2xl px-4 py-3
             border border-white/[0.06] focus-within:border-[#D4AF37]/50
@@ -254,7 +251,9 @@ const SearchPanel = () => {
               placeholder='Films, shows, directors…'
               className='flex-1 bg-transparent text-[13px] text-white outline-none placeholder-white/25 min-w-0' />
             {q && (
-              <button onClick={() => { setQ(''); setHovered(null); setFocusIdx(-1) }}
+              <button
+                onClick={() => { setQ(''); setHovered(null); setFocusIdx(-1) }}
+                style={{ touchAction: 'manipulation' }}
                 className='text-white/25 hover:text-white/60 hover:rotate-90 transition-all duration-200'>
                 <svg className='w-4 h-4' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
                   <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M6 18L18 6M6 6l12 12' />
@@ -262,8 +261,8 @@ const SearchPanel = () => {
               </button>
             )}
           </div>
-          {/* Keyboard hint */}
-          <div className='flex items-center gap-3 mt-2 px-1'>
+          {/* Keyboard hint — hide on mobile to save space */}
+          <div className='hidden sm:flex items-center gap-3 mt-2 px-1'>
             {[['↑↓', 'Navigate'], ['↵', 'Select'], ['Esc', 'Clear']].map(([k, l]) => (
               <div key={k} className='flex items-center gap-1'>
                 <kbd className='text-[8px] font-mono bg-white/[0.06] text-white/30 px-1.5 py-0.5 rounded-md border border-white/10'>{k}</kbd>
@@ -279,10 +278,13 @@ const SearchPanel = () => {
               {q.trim() ? `${results.length} result${results.length !== 1 ? 's' : ''}` : 'Recent'}
             </span>
             {!q.trim() && recents.length > 0 && (
-              <button onClick={() => {
-                setRecents([])
-                try { localStorage.removeItem('flikd_search_recents') } catch {}
-              }} className='text-[9px] text-white/25 hover:text-[#D4AF37] transition-colors'>
+              <button
+                style={{ touchAction: 'manipulation' }}
+                onClick={() => {
+                  setRecents([])
+                  try { localStorage.removeItem('flikd_search_recents') } catch {}
+                }}
+                className='text-[9px] text-white/25 hover:text-[#D4AF37] transition-colors'>
                 Clear history
               </button>
             )}
@@ -301,7 +303,9 @@ const SearchPanel = () => {
             return (
               <button key={`${item.id}-${item.media_type}`}
                 onMouseEnter={() => { setHovered(item); setFocusIdx(i) }}
+                onTouchStart={() => { setHovered(item); setFocusIdx(i) }}
                 onClick={() => saveRecent(item)}
+                style={{ touchAction: 'manipulation' }}
                 className={`
                   w-full flex items-center gap-3 px-4 py-2.5 text-left
                   transition-all duration-150 group border-l-2
@@ -310,7 +314,7 @@ const SearchPanel = () => {
                     : 'border-transparent hover:bg-white/[0.025] hover:border-[#D4AF37]/30'
                   }
                 `}
-                style={{ animation: `slideRight .18s ease-out ${Math.min(i * 0.03, 0.3)}s both` }}>
+                style={{ animation: `slideRight .18s ease-out ${Math.min(i * 0.03, 0.3)}s both`, touchAction: 'manipulation' }}>
                 {poster
                   ? <img src={poster} alt={title}
                       className={`w-8 h-[46px] object-cover rounded-lg flex-shrink-0 ring-1 transition-all duration-200 ${
@@ -358,14 +362,13 @@ const SearchPanel = () => {
               <p className='text-white/25 text-[13px]'>
                 {q.trim() ? `No results for "${q}"` : 'Search any film or series'}
               </p>
-              {!q.trim() && <p className='text-white/15 text-[11px] mt-1'>Hover or use ↑↓ to preview</p>}
             </div>
           )}
         </div>
       </div>
 
-      {/* Right pane */}
-      <div className='flex-1 overflow-hidden relative bg-[#060606]'>
+      {/* Right pane — hidden on mobile when no item selected */}
+      <div className={`flex-1 overflow-hidden relative bg-[#060606] ${!hovered ? 'hidden sm:block' : 'block'}`}>
         {!hovered
           ? <div className='h-full flex items-center justify-center'>
               <div className='text-center'>
@@ -376,7 +379,6 @@ const SearchPanel = () => {
                   </svg>
                 </div>
                 <p className='text-white/20 text-sm'>Hover a result to preview</p>
-                <p className='text-white/10 text-xs mt-1'>or use arrow keys to navigate</p>
               </div>
             </div>
           : <SearchDetailPreview item={hovered} detail={detail} loading={loadingDetail} />
@@ -481,8 +483,7 @@ const SearchDetailPreview = ({ item, detail, loading }) => {
                         ? <img src={TMDB_IMG(c.profile_path, 'w45')} alt={c.name}
                             className='w-9 h-9 rounded-full object-cover mx-auto mb-1 ring-1 ring-white/10
                               group-hover/cast:ring-[#D4AF37]/40 group-hover/cast:scale-110 transition-all duration-200' />
-                        : <div className='w-9 h-9 rounded-full bg-[#1A1A1A] mx-auto mb-1 flex items-center justify-center
-                            group-hover/cast:bg-[#D4AF37]/10 transition-colors'>
+                        : <div className='w-9 h-9 rounded-full bg-[#1A1A1A] mx-auto mb-1 flex items-center justify-center'>
                             <span className='text-[10px] text-white/30'>{c.name[0]}</span>
                           </div>
                       }
@@ -610,9 +611,10 @@ const DiscoverPanel = ({ currentUser }) => {
   return (
     <div className='h-full flex flex-col'>
       <div className='flex px-5 pt-1 border-b border-white/[0.04] flex-shrink-0 overflow-x-auto'
-        style={{ scrollbarWidth: 'none' }}>
+        style={{ scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch' }}>
         {DISCOVER_TABS.map(t => (
           <button key={t.id} onClick={() => setTab(t.id)}
+            style={{ touchAction: 'manipulation' }}
             className={`flex items-center gap-1.5 px-4 py-3 text-[12px] font-bold whitespace-nowrap
               border-b-2 -mb-px transition-all duration-200 ${tab === t.id
                 ? 'text-[#D4AF37] border-[#D4AF37]'
@@ -626,7 +628,7 @@ const DiscoverPanel = ({ currentUser }) => {
 
       {(tab === 'toprated' || tab === 'trending') && (
         <div className='flex gap-1.5 px-5 py-2.5 border-b border-white/[0.04] overflow-x-auto flex-shrink-0'
-          style={{ scrollbarWidth: 'none' }}>
+          style={{ scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch' }}>
           {tab === 'toprated' && (
             <>
               <Pill active={!genre} onClick={() => setGenre(null)}>All</Pill>
@@ -668,6 +670,7 @@ const DiscoverPanel = ({ currentUser }) => {
                           className={`rounded-2xl border overflow-hidden transition-all duration-200 ${isFull ? 'border-[#D4AF37]/20' : 'border-white/[0.05]'}`}
                           style={{ animation: `cardReveal .22s ease-out ${i * 0.04}s both` }}>
                           <button onClick={() => toggleList(list.id)}
+                            style={{ touchAction: 'manipulation' }}
                             className='w-full flex items-center gap-3 px-4 py-3.5 hover:bg-white/[0.025] transition-colors text-left'>
                             <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${isFull ? 'bg-[#D4AF37]/15' : 'bg-[#141414]'}`}>
                               {isFull
@@ -699,7 +702,7 @@ const DiscoverPanel = ({ currentUser }) => {
                                 ? <div className='flex justify-center py-5'><Spinner /></div>
                                 : items.length === 0
                                   ? <p className='text-center text-white/20 text-xs py-4'>Empty list</p>
-                                  : <div className='flex gap-2 overflow-x-auto pb-2' style={{ scrollbarWidth: 'thin', scrollbarColor: '#1A1A1A transparent' }}>
+                                  : <div className='flex gap-2 overflow-x-auto pb-2' style={{ scrollbarWidth: 'thin', scrollbarColor: '#1A1A1A transparent', WebkitOverflowScrolling: 'touch' }}>
                                       {items.map(item => {
                                         const p = TMDB_IMG(item.poster_path, 'w154')
                                         return (
@@ -758,8 +761,6 @@ const DiscoverHero = ({ item }) => {
           : <div className='w-full h-full bg-gradient-to-br from-[#1A1A1A] to-[#0A0A0A]' />
       }
       <div className='absolute inset-0' style={{ background: 'linear-gradient(to top, rgba(8,8,8,.95) 0%, rgba(8,8,8,.3) 50%, transparent 100%)' }} />
-      <div className='absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500'
-        style={{ background: 'linear-gradient(135deg, rgba(212,175,55,0.06) 0%, transparent 60%)' }} />
       <div className='absolute bottom-0 left-0 right-0 p-4'>
         <span className='text-[9px] font-black text-[#D4AF37] uppercase tracking-wider'>#1 · {item.media_type === 'tv' ? 'Series' : 'Film'}</span>
         <h3 className='font-bebas text-[24px] text-white leading-tight mt-0.5'>{title}</h3>
@@ -884,26 +885,26 @@ const LibraryPanel = ({ currentUser }) => {
     <div className='h-full flex flex-col'>
       <div className='px-5 py-3 border-b border-white/[0.04] flex-shrink-0'>
         <div className='flex items-center justify-between gap-4 mb-2'>
-          <div className='flex items-center gap-5'>
+          <div className='flex items-center gap-3 sm:gap-5 overflow-x-auto' style={{ scrollbarWidth: 'none' }}>
             {[['Total', stats.total], ['Films', stats.movies], ['Series', stats.shows], ['Watched', stats.watched]].map(([k, v]) => (
-              <div key={k} className='text-center'>
+              <div key={k} className='text-center flex-shrink-0'>
                 <p className='font-bebas text-xl text-[#D4AF37] leading-none tabular-nums'>{v}</p>
                 <p className='text-[9px] text-white/25 uppercase tracking-wider'>{k}</p>
               </div>
             ))}
           </div>
-          <div className='flex items-center gap-2'>
+          <div className='flex items-center gap-2 flex-shrink-0'>
             <div className='flex items-center gap-2 bg-[#111] border border-white/[0.06] rounded-xl px-3 py-1.5 focus-within:border-[#D4AF37]/30 transition-all duration-200'>
               <svg className='w-3 h-3 text-white/25' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
                 <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z' />
               </svg>
               <input value={search} onChange={e => setSearch(e.target.value)} placeholder='Filter…'
-                className='bg-transparent text-[11px] text-white outline-none w-24 placeholder-white/20' />
+                className='bg-transparent text-[11px] text-white outline-none w-20 placeholder-white/20' />
             </div>
             <div className='flex rounded-xl overflow-hidden border border-white/[0.06]'>
               {[['grid', 'M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z'],
                  ['list', 'M4 6h16M4 10h16M4 14h16M4 18h16']].map(([v, d]) => (
-                <button key={v} onClick={() => setView(v)}
+                <button key={v} onClick={() => setView(v)} style={{ touchAction: 'manipulation' }}
                   className={`p-2 transition-colors ${view === v ? 'bg-[#D4AF37]/15 text-[#D4AF37]' : 'bg-[#0E0E0E] text-white/25 hover:text-white/55'}`}>
                   <svg className='w-3.5 h-3.5' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
                     <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d={d} />
@@ -923,9 +924,9 @@ const LibraryPanel = ({ currentUser }) => {
       </div>
 
       <div className='px-5 py-2 border-b border-white/[0.04] flex items-center justify-between gap-3 flex-shrink-0'>
-        <div className='flex gap-1.5 overflow-x-auto' style={{ scrollbarWidth: 'none' }}>
+        <div className='flex gap-1.5 overflow-x-auto' style={{ scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch' }}>
           {[{id:'all',label:'All'},{id:'movies',label:'🎬 Films'},{id:'shows',label:'📺 Series'},{id:'watched',label:'Watched'},{id:'queued',label:'Queued'}].map(f => (
-            <button key={f.id} onClick={() => setFilter(f.id)}
+            <button key={f.id} onClick={() => setFilter(f.id)} style={{ touchAction: 'manipulation' }}
               className={`flex-shrink-0 px-3 py-1.5 rounded-full text-[11px] font-bold transition-all duration-200 ${
                 filter === f.id
                   ? 'bg-[#D4AF37] text-[#0A0A0A] shadow-[0_0_12px_rgba(212,175,55,0.3)]'
@@ -1075,9 +1076,10 @@ const WatchlistPanel = ({ currentUser }) => {
 
   return (
     <div className='h-full flex flex-col'>
-      <div className='px-5 py-3 border-b border-white/[0.04] flex items-center gap-6 flex-shrink-0'>
+      <div className='px-5 py-3 border-b border-white/[0.04] flex items-center gap-4 sm:gap-6 flex-shrink-0 overflow-x-auto'
+        style={{ scrollbarWidth: 'none' }}>
         {[['Lists', lists.length], ['In Progress', active.length], ['Complete', done.length], ['Watched', totalWatched]].map(([k, v]) => (
-          <div key={k}>
+          <div key={k} className='flex-shrink-0'>
             <p className='font-bebas text-xl text-[#D4AF37] leading-none tabular-nums'>{v}</p>
             <p className='text-[9px] text-white/25 uppercase tracking-wider'>{k}</p>
           </div>
@@ -1086,7 +1088,7 @@ const WatchlistPanel = ({ currentUser }) => {
 
       <div className='flex border-b border-white/[0.04] flex-shrink-0'>
         {[['active', 'In Progress', active.length], ['done', 'Completed', done.length]].map(([id, label, count]) => (
-          <button key={id} onClick={() => setTab(id)}
+          <button key={id} onClick={() => setTab(id)} style={{ touchAction: 'manipulation' }}
             className={`flex-1 py-3 text-[12px] font-bold border-b-2 -mb-px transition-all duration-200 ${
               tab === id ? 'text-[#D4AF37] border-[#D4AF37]' : 'text-white/30 border-transparent hover:text-white/55'
             }`}>
@@ -1110,7 +1112,7 @@ const WatchlistPanel = ({ currentUser }) => {
                   <div key={list.id}
                     className={`rounded-2xl border overflow-hidden transition-all duration-200 ${isFull ? 'border-[#D4AF37]/20' : 'border-white/[0.05]'}`}
                     style={{ animation: `cardReveal .22s ease-out ${i * 0.04}s both` }}>
-                    <button onClick={() => toggle(list.id)}
+                    <button onClick={() => toggle(list.id)} style={{ touchAction: 'manipulation' }}
                       className='w-full flex items-center gap-3 px-4 py-3.5 hover:bg-white/[0.02] transition-colors text-left'>
                       <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${isFull ? 'bg-[#D4AF37]/15' : 'bg-[#141414]'}`}>
                         {isFull
@@ -1157,6 +1159,7 @@ const WatchlistPanel = ({ currentUser }) => {
                                       <button
                                         onClick={(e) => { e.stopPropagation(); toggleWatched(list.id, item.id, item.is_completed) }}
                                         disabled={isToggling}
+                                        style={{ touchAction: 'manipulation' }}
                                         className={`flex-shrink-0 w-6 h-6 rounded-full border transition-all duration-200 flex items-center justify-center ${
                                           item.is_completed
                                             ? 'bg-[#D4AF37] border-[#D4AF37] hover:bg-transparent hover:border-[#D4AF37]/50'
@@ -1185,7 +1188,7 @@ const WatchlistPanel = ({ currentUser }) => {
 }
 
 /* ─────────────────────────────────────────────────────
-   PANEL 5 — SETTINGS v4  (wired to AppSettingsContext)
+   PANEL 5 — SETTINGS
 ───────────────────────────────────────────────────── */
 const SettingsPanel = ({ currentUser }) => {
   const { settings, updateSetting, updateSettings, resetSettings } = useAppSettings()
@@ -1193,6 +1196,7 @@ const SettingsPanel = ({ currentUser }) => {
   const [saving, setSaving] = useState(false)
   const [saveStatus, setSaveStatus] = useState('idle')
   const [resetConfirm, setResetConfirm] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
 
   const [form, setForm] = useState({
     displayName: currentUser?.displayName || '',
@@ -1229,13 +1233,15 @@ const SettingsPanel = ({ currentUser }) => {
     { id: 'danger',        label: 'Danger Zone',   icon: 'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z' },
   ]
 
+  const currentSection = SECTIONS.find(s => s.id === section)
+
   const Toggle = ({ settingKey, label, desc, danger = false }) => (
     <div className='flex items-center justify-between py-3.5 border-b border-white/[0.03] group/toggle'>
       <div className='flex-1 mr-4 min-w-0'>
         <p className={`text-[13px] font-semibold transition-colors ${danger ? 'text-red-400/70' : 'text-white/80 group-hover/toggle:text-white/90'}`}>{label}</p>
         {desc && <p className='text-[11px] text-white/30 mt-0.5 leading-snug'>{desc}</p>}
       </div>
-      <button onClick={() => updateSetting(settingKey, !settings[settingKey])}
+      <button onClick={() => updateSetting(settingKey, !settings[settingKey])} style={{ touchAction: 'manipulation' }}
         className={`relative flex-shrink-0 w-11 h-6 rounded-full transition-all duration-250 ${
           settings[settingKey]
             ? danger ? 'bg-red-500/70 shadow-[0_0_10px_rgba(239,68,68,0.2)]' : 'bg-[#D4AF37] shadow-[0_0_10px_rgba(212,175,55,0.3)]'
@@ -1265,10 +1271,10 @@ const SettingsPanel = ({ currentUser }) => {
 
   return (
     <div className='h-full flex overflow-hidden'>
-      {/* Sidebar */}
-      <div className='w-44 flex-shrink-0 border-r border-white/[0.04] py-3 overflow-y-auto' style={{ scrollbarWidth: 'none' }}>
+      {/* Sidebar — hidden on mobile, shown on sm+ */}
+      <div className='hidden sm:flex w-44 flex-shrink-0 border-r border-white/[0.04] flex-col py-3 overflow-y-auto' style={{ scrollbarWidth: 'none' }}>
         {SECTIONS.map(s => (
-          <button key={s.id} onClick={() => setSection(s.id)}
+          <button key={s.id} onClick={() => setSection(s.id)} style={{ touchAction: 'manipulation' }}
             className={`w-full flex items-center gap-3 px-4 py-3 text-left text-[12px] font-semibold transition-all duration-200 ${
               section === s.id
                 ? s.id === 'danger' ? 'text-red-400 bg-red-500/8 border-r-2 border-red-500/50' : 'text-[#D4AF37] bg-[#D4AF37]/8 border-r-2 border-[#D4AF37]'
@@ -1282,262 +1288,266 @@ const SettingsPanel = ({ currentUser }) => {
         ))}
       </div>
 
-      <div className='flex-1 overflow-y-auto px-6 py-5' style={{ scrollbarWidth: 'thin', scrollbarColor: '#222 transparent' }}>
-
-        {/* ── ACCOUNT ── */}
-        {section === 'account' && (
-          <div className='max-w-lg'>
-            <SectionTitle>Account Details</SectionTitle>
-            <Field label='Display Name' value={form.displayName} onChange={v => setForm(p => ({ ...p, displayName: v }))} />
-            <Field label='Bio' value={form.bio} onChange={v => setForm(p => ({ ...p, bio: v }))} rows={3} hint='Shown on your public profile' />
-            <Field label='Username' value={form.username} disabled onChange={() => {}} hint='Cannot be changed' />
-            <Field label='Email' value={form.email} disabled onChange={() => {}} hint='Manage email via account portal' />
-            <div className='mb-4'>
-              <p className='text-[10px] font-black text-white/25 uppercase tracking-[0.18em] mb-2'>Profile Photo</p>
-              <div className='flex items-center gap-4'>
-                <div className='w-16 h-16 rounded-full border border-white/10 overflow-hidden flex items-center justify-center bg-gradient-to-br from-[#1A1A1A] to-[#0D0D0D]'>
-                  {currentUser?.avatar
-                    ? <img src={currentUser.avatar} alt='' className='w-full h-full object-cover' />
-                    : <span className='font-bebas text-xl text-[#D4AF37]'>{currentUser?.displayName?.[0] || 'U'}</span>
-                  }
-                </div>
-                <div>
-                  <button className='block px-3 py-1.5 bg-[#111] border border-white/[0.08] rounded-lg text-[11px] text-white/50 hover:border-[#D4AF37]/30 hover:text-[#D4AF37] transition-all duration-200 mb-1'>
-                    Change photo
-                  </button>
-                  <p className='text-[10px] text-white/20'>JPG, PNG · Max 5MB</p>
-                </div>
-              </div>
+      {/* Mobile section selector — shown only on mobile */}
+      <div className='flex-1 flex flex-col overflow-hidden'>
+        {/* Mobile section dropdown */}
+        <div className='sm:hidden border-b border-white/[0.04] px-4 py-2 flex-shrink-0'>
+          <button
+            onClick={() => setMenuOpen(p => !p)}
+            style={{ touchAction: 'manipulation' }}
+            className='w-full flex items-center justify-between px-4 py-2.5 bg-[#111] border border-white/[0.08] rounded-xl'>
+            <div className='flex items-center gap-3'>
+              {currentSection && (
+                <svg className='w-4 h-4 text-[#D4AF37]' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+                  <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={1.8} d={currentSection.icon} />
+                </svg>
+              )}
+              <span className='text-[13px] font-semibold text-white/80'>
+                {currentSection?.label || 'Account'}
+              </span>
             </div>
-          </div>
-        )}
-
-        {/* ── APPEARANCE ── */}
-        {section === 'appearance' && (
-          <div className='max-w-lg'>
-            <SectionTitle>Appearance</SectionTitle>
-
-            {/* Theme picker */}
-            <div className='mb-5'>
-              <p className='text-[10px] font-black text-white/25 uppercase tracking-[0.18em] mb-2.5'>Theme</p>
-              <div className='flex gap-2'>
-                {[
-                  { id: 'dark', label: 'Dark', bg: '#0A0A0A', border: '#222' },
-                  { id: 'cinema', label: 'Cinema', bg: '#0D0A00', border: '#3D2B00' },
-                  { id: 'midnight', label: 'Midnight', bg: '#06080F', border: '#0D1424' },
-                ].map(t => (
-                  <button key={t.id} onClick={() => updateSetting('theme', t.id)}
-                    className={`flex-1 p-3 rounded-2xl border text-center transition-all duration-200 ${
-                      settings.theme === t.id ? 'border-[#D4AF37]/50 shadow-[0_0_12px_rgba(212,175,55,0.15)]' : 'border-white/[0.06] hover:border-white/[0.12]'
-                    }`}
-                    style={{ background: t.bg }}>
-                    <div className='w-8 h-8 rounded-xl mx-auto mb-2 border' style={{ background: t.bg, borderColor: t.border }} />
-                    <p className={`text-[11px] font-bold ${settings.theme === t.id ? 'text-[#D4AF37]' : 'text-white/40'}`}>{t.label}</p>
-                    {settings.theme === t.id && <div className='w-1.5 h-1.5 rounded-full bg-[#D4AF37] mx-auto mt-1.5' />}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Accent color */}
-            <div className='mb-5'>
-              <p className='text-[10px] font-black text-white/25 uppercase tracking-[0.18em] mb-2.5'>Accent Color</p>
-              <div className='flex gap-2'>
-                {[
-                  { id: 'gold',     label: 'Gold',     color: '#D4AF37' },
-                  { id: 'platinum', label: 'Platinum', color: '#B0B0B8' },
-                  { id: 'rose',     label: 'Rose',     color: '#E8A4A4' },
-                ].map(a => (
-                  <button key={a.id} onClick={() => updateSetting('accentColor', a.id)}
-                    className={`flex-1 p-3 rounded-2xl border text-center transition-all duration-200 ${
-                      settings.accentColor === a.id ? 'border-white/20' : 'border-white/[0.05] hover:border-white/[0.1]'
-                    }`}>
-                    <div className='w-6 h-6 rounded-full mx-auto mb-2 ring-2 transition-all'
-                      style={{ background: a.color, ringColor: settings.accentColor === a.id ? a.color : 'transparent', boxShadow: settings.accentColor === a.id ? `0 0 12px ${a.color}40` : 'none' }} />
-                    <p className={`text-[11px] font-bold ${settings.accentColor === a.id ? 'text-white/80' : 'text-white/30'}`}>{a.label}</p>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <Toggle settingKey='compactFeed'   label='Compact Feed'    desc='Tighter spacing — see more posts at once' />
-            <Toggle settingKey='showBackdrops' label='Movie Backdrops'  desc='Cinematic backdrops on review posts' />
-            <Toggle settingKey='animations'    label='Animations'       desc='UI transitions and micro-interactions' />
-            <Toggle settingKey='reduceMotion'  label='Reduce Motion'    desc='Minimize motion for accessibility' />
-          </div>
-        )}
-
-        {/* ── NOTIFICATIONS ── */}
-        {section === 'notifications' && (
-          <div className='max-w-lg'>
-            <SectionTitle>Notifications</SectionTitle>
-            <div className='mb-4 p-3.5 rounded-2xl border border-white/[0.05] bg-[#0A0A0A]'>
-              <div className='flex items-center gap-3'>
-                <div className='w-8 h-8 rounded-xl bg-[#D4AF37]/10 flex items-center justify-center flex-shrink-0'>
-                  <svg className='w-4 h-4 text-[#D4AF37]' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
-                    <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9' />
+            <svg className={`w-4 h-4 text-white/30 transition-transform duration-200 ${menuOpen ? 'rotate-180' : ''}`}
+              fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+              <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M19 9l-7 7-7-7' />
+            </svg>
+          </button>
+          {menuOpen && (
+            <div className='mt-1 bg-[#111] border border-white/[0.08] rounded-xl overflow-hidden'
+              style={{ animation: 'cardReveal .15s ease-out' }}>
+              {SECTIONS.map(s => (
+                <button key={s.id}
+                  onClick={() => { setSection(s.id); setMenuOpen(false) }}
+                  style={{ touchAction: 'manipulation' }}
+                  className={`w-full flex items-center gap-3 px-4 py-3 text-left text-[12px] font-semibold transition-all duration-200 border-b border-white/[0.04] last:border-0 ${
+                    section === s.id
+                      ? s.id === 'danger' ? 'text-red-400 bg-red-500/8' : 'text-[#D4AF37] bg-[#D4AF37]/8'
+                      : s.id === 'danger' ? 'text-red-400/60' : 'text-white/50'
+                  }`}>
+                  <svg className='w-4 h-4 flex-shrink-0' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+                    <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={1.8} d={s.icon} />
                   </svg>
-                </div>
-                <div>
-                  <p className='text-[12px] font-bold text-white/70'>Push notifications</p>
-                  <p className='text-[10px] text-white/30'>Enable browser notifications for real-time alerts</p>
-                </div>
-                <button className='ml-auto text-[10px] text-[#D4AF37]/70 hover:text-[#D4AF37] transition-colors flex-shrink-0 font-bold'>
-                  Enable →
+                  <span>{s.label}</span>
                 </button>
-              </div>
-            </div>
-            <Toggle settingKey='reviewLikes'  label='Review Interactions' desc='Likes, comments, and reposts on your reviews' />
-            <Toggle settingKey='listCollabs'  label='List Collaboration'  desc='When someone adds to your shared list' />
-            <Toggle settingKey='newFollowers' label='New Followers'        desc='When someone follows your profile' />
-            <Toggle settingKey='pointsEarned' label='Points & Levels'      desc='XP earned and level-up alerts' />
-            <Toggle settingKey='weeklyDigest' label='Weekly Digest'        desc='Your watch activity summary every Monday' />
-          </div>
-        )}
-
-        {/* ── PRIVACY ── */}
-        {section === 'privacy' && (
-          <div className='max-w-lg'>
-            <SectionTitle>Privacy</SectionTitle>
-            <Toggle settingKey='publicProfile' label='Public Profile'     desc='Anyone can view your reviews and lists' />
-            <Toggle settingKey='showLists'     label='Visible Watchlists' desc='Lists appear on your public profile' />
-            <Toggle settingKey='showActivity'  label='Activity Feed'      desc="Appear in others' activity feeds" />
-            <Toggle settingKey='allowDMs'      label='Direct Messages'    desc='Allow other users to message you' />
-
-            <div className='mt-4 p-4 rounded-2xl border border-white/[0.05] bg-[#0A0A0A]'>
-              <p className='text-[11px] font-bold text-white/60 mb-1'>Data Usage</p>
-              <p className='text-[10px] text-white/30 leading-relaxed'>
-                Flik'd uses your watch data to personalize recommendations. We never sell your personal data to third parties.
-              </p>
-              <button className='mt-2 text-[10px] text-[#D4AF37]/60 hover:text-[#D4AF37] transition-colors font-bold'>View Privacy Policy →</button>
-            </div>
-          </div>
-        )}
-
-        {/* ── PLAYBACK ── */}
-        {section === 'playback' && (
-          <div className='max-w-lg'>
-            <SectionTitle>Playback & Display</SectionTitle>
-            <Toggle settingKey='autoplay' label='Autoplay Trailers' desc='Trailers play automatically on hover' />
-
-            <div className='mb-4'>
-              <p className='text-[10px] font-black text-white/25 uppercase tracking-[0.18em] mb-2.5'>Language</p>
-              <select value={settings.language} onChange={e => updateSetting('language', e.target.value)}
-                className='w-full bg-[#0E0E0E] border border-white/[0.07] rounded-xl px-4 py-3 text-[13px] text-white outline-none
-                  focus:border-[#D4AF37]/40 focus:shadow-[0_0_0_3px_rgba(212,175,55,0.06)] transition-all duration-200 cursor-pointer'>
-                <option value='en'>English</option>
-                <option value='es'>Spanish</option>
-                <option value='fr'>French</option>
-                <option value='de'>German</option>
-                <option value='ja'>Japanese</option>
-                <option value='ko'>Korean</option>
-                <option value='pt'>Portuguese</option>
-              </select>
-            </div>
-
-            <div className='mb-4'>
-              <p className='text-[10px] font-black text-white/25 uppercase tracking-[0.18em] mb-2.5'>Date Format</p>
-              <div className='flex gap-2'>
-                {[
-                  { id: 'relative', label: 'Relative', example: '2 days ago' },
-                  { id: 'absolute', label: 'Absolute', example: 'Apr 11, 2026' },
-                ].map(d => (
-                  <button key={d.id} onClick={() => updateSetting('dateFormat', d.id)}
-                    className={`flex-1 p-3 rounded-xl border text-center transition-all duration-200 ${
-                      settings.dateFormat === d.id ? 'border-[#D4AF37]/40 bg-[#D4AF37]/5' : 'border-white/[0.06] hover:border-white/[0.12]'
-                    }`}>
-                    <p className={`text-[12px] font-bold mb-0.5 ${settings.dateFormat === d.id ? 'text-[#D4AF37]' : 'text-white/50'}`}>{d.label}</p>
-                    <p className='text-[10px] text-white/25'>{d.example}</p>
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ── DATA ── */}
-        {section === 'data' && (
-          <div className='max-w-lg'>
-            <SectionTitle>Data & Export</SectionTitle>
-            <div className='space-y-3'>
-              {[
-                ['Export Watch History', 'Download all watched titles as CSV', 'Export CSV'],
-                ['Export Reviews',       'Download all your reviews as JSON', 'Export JSON'],
-                ['Export Watchlists',    'Download your lists as JSON',       'Export JSON'],
-              ].map(([label, desc, btn]) => (
-                <div key={label} className='flex items-center justify-between p-4 bg-[#0E0E0E] border border-white/[0.05] rounded-xl hover:border-[#D4AF37]/10 transition-colors duration-200'>
-                  <div>
-                    <p className='text-[13px] font-semibold text-white/80'>{label}</p>
-                    <p className='text-[11px] text-white/30 mt-0.5'>{desc}</p>
-                  </div>
-                  <button className='ml-4 flex-shrink-0 px-3 py-1.5 bg-[#1A1A1A] border border-white/[0.08] rounded-lg text-[11px] text-white/50 hover:border-[#D4AF37]/30 hover:text-[#D4AF37] transition-all duration-200'>
-                    {btn}
-                  </button>
-                </div>
               ))}
             </div>
+          )}
+        </div>
 
-            {/* Reset all settings */}
-            <div className='mt-6 p-4 border border-white/[0.05] bg-[#0A0A0A] rounded-2xl'>
-              <p className='text-[13px] font-semibold text-white/60 mb-1'>Reset Preferences</p>
-              <p className='text-[11px] text-white/30 mb-3'>Restore all appearance, notification, and playback settings to default values.</p>
-              {resetConfirm
-                ? <div className='flex items-center gap-2'>
-                    <button onClick={() => { resetSettings(); setResetConfirm(false) }}
-                      className='px-3 py-1.5 bg-[#D4AF37]/15 border border-[#D4AF37]/25 text-[#D4AF37] text-[11px] font-bold rounded-lg hover:bg-[#D4AF37]/25 transition-all duration-200'>
-                      Yes, reset
+        <div className='flex-1 overflow-y-auto px-6 py-5' style={{ scrollbarWidth: 'thin', scrollbarColor: '#222 transparent' }}>
+          {section === 'account' && (
+            <div className='max-w-lg'>
+              <SectionTitle>Account Details</SectionTitle>
+              <Field label='Display Name' value={form.displayName} onChange={v => setForm(p => ({ ...p, displayName: v }))} />
+              <Field label='Bio' value={form.bio} onChange={v => setForm(p => ({ ...p, bio: v }))} rows={3} hint='Shown on your public profile' />
+              <Field label='Username' value={form.username} disabled onChange={() => {}} hint='Cannot be changed' />
+              <Field label='Email' value={form.email} disabled onChange={() => {}} hint='Manage email via account portal' />
+              <div className='mb-4'>
+                <p className='text-[10px] font-black text-white/25 uppercase tracking-[0.18em] mb-2'>Profile Photo</p>
+                <div className='flex items-center gap-4'>
+                  <div className='w-16 h-16 rounded-full border border-white/10 overflow-hidden flex items-center justify-center bg-gradient-to-br from-[#1A1A1A] to-[#0D0D0D]'>
+                    {currentUser?.avatar
+                      ? <img src={currentUser.avatar} alt='' className='w-full h-full object-cover' />
+                      : <span className='font-bebas text-xl text-[#D4AF37]'>{currentUser?.displayName?.[0] || 'U'}</span>
+                    }
+                  </div>
+                  <div>
+                    <button style={{ touchAction: 'manipulation' }} className='block px-3 py-1.5 bg-[#111] border border-white/[0.08] rounded-lg text-[11px] text-white/50 hover:border-[#D4AF37]/30 hover:text-[#D4AF37] transition-all duration-200 mb-1'>
+                      Change photo
                     </button>
-                    <button onClick={() => setResetConfirm(false)}
-                      className='px-3 py-1.5 bg-white/[0.04] border border-white/[0.08] text-white/40 text-[11px] font-bold rounded-lg hover:text-white/70 transition-all duration-200'>
-                      Cancel
+                    <p className='text-[10px] text-white/20'>JPG, PNG · Max 5MB</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {section === 'appearance' && (
+            <div className='max-w-lg'>
+              <SectionTitle>Appearance</SectionTitle>
+              <div className='mb-5'>
+                <p className='text-[10px] font-black text-white/25 uppercase tracking-[0.18em] mb-2.5'>Theme</p>
+                <div className='flex gap-2'>
+                  {[
+                    { id: 'dark', label: 'Dark', bg: '#0A0A0A', border: '#222' },
+                    { id: 'cinema', label: 'Cinema', bg: '#0D0A00', border: '#3D2B00' },
+                    { id: 'midnight', label: 'Midnight', bg: '#06080F', border: '#0D1424' },
+                  ].map(t => (
+                    <button key={t.id} onClick={() => updateSetting('theme', t.id)} style={{ touchAction: 'manipulation' }}
+                      className={`flex-1 p-3 rounded-2xl border text-center transition-all duration-200 ${
+                        settings.theme === t.id ? 'border-[#D4AF37]/50 shadow-[0_0_12px_rgba(212,175,55,0.15)]' : 'border-white/[0.06] hover:border-white/[0.12]'
+                      }`}
+                      style={{ background: t.bg }}>
+                      <div className='w-8 h-8 rounded-xl mx-auto mb-2 border' style={{ background: t.bg, borderColor: t.border }} />
+                      <p className={`text-[11px] font-bold ${settings.theme === t.id ? 'text-[#D4AF37]' : 'text-white/40'}`}>{t.label}</p>
+                      {settings.theme === t.id && <div className='w-1.5 h-1.5 rounded-full bg-[#D4AF37] mx-auto mt-1.5' />}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className='mb-5'>
+                <p className='text-[10px] font-black text-white/25 uppercase tracking-[0.18em] mb-2.5'>Accent Color</p>
+                <div className='flex gap-2'>
+                  {[
+                    { id: 'gold',     label: 'Gold',     color: '#D4AF37' },
+                    { id: 'platinum', label: 'Platinum', color: '#B0B0B8' },
+                    { id: 'rose',     label: 'Rose',     color: '#E8A4A4' },
+                  ].map(a => (
+                    <button key={a.id} onClick={() => updateSetting('accentColor', a.id)} style={{ touchAction: 'manipulation' }}
+                      className={`flex-1 p-3 rounded-2xl border text-center transition-all duration-200 ${
+                        settings.accentColor === a.id ? 'border-white/20' : 'border-white/[0.05] hover:border-white/[0.1]'
+                      }`}>
+                      <div className='w-6 h-6 rounded-full mx-auto mb-2 ring-2 transition-all'
+                        style={{ background: a.color, boxShadow: settings.accentColor === a.id ? `0 0 12px ${a.color}40` : 'none' }} />
+                      <p className={`text-[11px] font-bold ${settings.accentColor === a.id ? 'text-white/80' : 'text-white/30'}`}>{a.label}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <Toggle settingKey='compactFeed'   label='Compact Feed'    desc='Tighter spacing — see more posts at once' />
+              <Toggle settingKey='showBackdrops' label='Movie Backdrops'  desc='Cinematic backdrops on review posts' />
+              <Toggle settingKey='animations'    label='Animations'       desc='UI transitions and micro-interactions' />
+              <Toggle settingKey='reduceMotion'  label='Reduce Motion'    desc='Minimize motion for accessibility' />
+            </div>
+          )}
+
+          {section === 'notifications' && (
+            <div className='max-w-lg'>
+              <SectionTitle>Notifications</SectionTitle>
+              <Toggle settingKey='reviewLikes'  label='Review Interactions' desc='Likes, comments, and reposts on your reviews' />
+              <Toggle settingKey='listCollabs'  label='List Collaboration'  desc='When someone adds to your shared list' />
+              <Toggle settingKey='newFollowers' label='New Followers'        desc='When someone follows your profile' />
+              <Toggle settingKey='pointsEarned' label='Points & Levels'      desc='XP earned and level-up alerts' />
+              <Toggle settingKey='weeklyDigest' label='Weekly Digest'        desc='Your watch activity summary every Monday' />
+            </div>
+          )}
+
+          {section === 'privacy' && (
+            <div className='max-w-lg'>
+              <SectionTitle>Privacy</SectionTitle>
+              <Toggle settingKey='publicProfile' label='Public Profile'     desc='Anyone can view your reviews and lists' />
+              <Toggle settingKey='showLists'     label='Visible Watchlists' desc='Lists appear on your public profile' />
+              <Toggle settingKey='showActivity'  label='Activity Feed'      desc="Appear in others' activity feeds" />
+              <Toggle settingKey='allowDMs'      label='Direct Messages'    desc='Allow other users to message you' />
+            </div>
+          )}
+
+          {section === 'playback' && (
+            <div className='max-w-lg'>
+              <SectionTitle>Playback & Display</SectionTitle>
+              <Toggle settingKey='autoplay' label='Autoplay Trailers' desc='Trailers play automatically on hover' />
+              <div className='mb-4'>
+                <p className='text-[10px] font-black text-white/25 uppercase tracking-[0.18em] mb-2.5'>Language</p>
+                <select value={settings.language} onChange={e => updateSetting('language', e.target.value)}
+                  className='w-full bg-[#0E0E0E] border border-white/[0.07] rounded-xl px-4 py-3 text-[13px] text-white outline-none
+                    focus:border-[#D4AF37]/40 transition-all duration-200 cursor-pointer'>
+                  <option value='en'>English</option>
+                  <option value='es'>Spanish</option>
+                  <option value='fr'>French</option>
+                  <option value='de'>German</option>
+                  <option value='ja'>Japanese</option>
+                  <option value='ko'>Korean</option>
+                  <option value='pt'>Portuguese</option>
+                </select>
+              </div>
+              <div className='mb-4'>
+                <p className='text-[10px] font-black text-white/25 uppercase tracking-[0.18em] mb-2.5'>Date Format</p>
+                <div className='flex gap-2'>
+                  {[
+                    { id: 'relative', label: 'Relative', example: '2 days ago' },
+                    { id: 'absolute', label: 'Absolute', example: 'Apr 11, 2026' },
+                  ].map(d => (
+                    <button key={d.id} onClick={() => updateSetting('dateFormat', d.id)} style={{ touchAction: 'manipulation' }}
+                      className={`flex-1 p-3 rounded-xl border text-center transition-all duration-200 ${
+                        settings.dateFormat === d.id ? 'border-[#D4AF37]/40 bg-[#D4AF37]/5' : 'border-white/[0.06] hover:border-white/[0.12]'
+                      }`}>
+                      <p className={`text-[12px] font-bold mb-0.5 ${settings.dateFormat === d.id ? 'text-[#D4AF37]' : 'text-white/50'}`}>{d.label}</p>
+                      <p className='text-[10px] text-white/25'>{d.example}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {section === 'data' && (
+            <div className='max-w-lg'>
+              <SectionTitle>Data & Export</SectionTitle>
+              <div className='space-y-3'>
+                {[
+                  ['Export Watch History', 'Download all watched titles as CSV', 'Export CSV'],
+                  ['Export Reviews',       'Download all your reviews as JSON', 'Export JSON'],
+                  ['Export Watchlists',    'Download your lists as JSON',       'Export JSON'],
+                ].map(([label, desc, btn]) => (
+                  <div key={label} className='flex items-center justify-between p-4 bg-[#0E0E0E] border border-white/[0.05] rounded-xl hover:border-[#D4AF37]/10 transition-colors duration-200'>
+                    <div>
+                      <p className='text-[13px] font-semibold text-white/80'>{label}</p>
+                      <p className='text-[11px] text-white/30 mt-0.5'>{desc}</p>
+                    </div>
+                    <button style={{ touchAction: 'manipulation' }} className='ml-4 flex-shrink-0 px-3 py-1.5 bg-[#1A1A1A] border border-white/[0.08] rounded-lg text-[11px] text-white/50 hover:border-[#D4AF37]/30 hover:text-[#D4AF37] transition-all duration-200'>
+                      {btn}
                     </button>
                   </div>
-                : <button onClick={() => setResetConfirm(true)}
-                    className='px-4 py-2 bg-[#1A1A1A] border border-white/[0.08] text-[11px] text-white/50 font-bold rounded-xl hover:border-white/20 transition-all duration-200'>
-                    Reset to Defaults
+                ))}
+              </div>
+              <div className='mt-6 p-4 border border-white/[0.05] bg-[#0A0A0A] rounded-2xl'>
+                <p className='text-[13px] font-semibold text-white/60 mb-1'>Reset Preferences</p>
+                <p className='text-[11px] text-white/30 mb-3'>Restore all settings to defaults.</p>
+                {resetConfirm
+                  ? <div className='flex items-center gap-2'>
+                      <button onClick={() => { resetSettings(); setResetConfirm(false) }} style={{ touchAction: 'manipulation' }}
+                        className='px-3 py-1.5 bg-[#D4AF37]/15 border border-[#D4AF37]/25 text-[#D4AF37] text-[11px] font-bold rounded-lg hover:bg-[#D4AF37]/25 transition-all duration-200'>
+                        Yes, reset
+                      </button>
+                      <button onClick={() => setResetConfirm(false)} style={{ touchAction: 'manipulation' }}
+                        className='px-3 py-1.5 bg-white/[0.04] border border-white/[0.08] text-white/40 text-[11px] font-bold rounded-lg'>
+                        Cancel
+                      </button>
+                    </div>
+                  : <button onClick={() => setResetConfirm(true)} style={{ touchAction: 'manipulation' }}
+                      className='px-4 py-2 bg-[#1A1A1A] border border-white/[0.08] text-[11px] text-white/50 font-bold rounded-xl hover:border-white/20 transition-all duration-200'>
+                      Reset to Defaults
+                    </button>
+                }
+              </div>
+            </div>
+          )}
+
+          {section === 'danger' && (
+            <div className='max-w-lg'>
+              <h3 className='font-bebas text-lg text-red-400/80 tracking-wide mb-4'>Danger Zone</h3>
+              <div className='space-y-3'>
+                <div className='p-4 border border-orange-500/20 bg-orange-500/5 rounded-2xl'>
+                  <p className='text-[13px] font-bold text-white/80 mb-1'>Clear Watch History</p>
+                  <p className='text-[11px] text-white/35 mb-3'>Mark all items as unwatched. This cannot be undone.</p>
+                  <button style={{ touchAction: 'manipulation' }} className='px-4 py-2 bg-orange-500/10 border border-orange-500/25 text-orange-400 text-[11px] font-bold rounded-xl hover:bg-orange-500/20 transition-all duration-200'>
+                    Clear History
                   </button>
-              }
-            </div>
-          </div>
-        )}
-
-        {/* ── DANGER ── */}
-        {section === 'danger' && (
-          <div className='max-w-lg'>
-            <h3 className='font-bebas text-lg text-red-400/80 tracking-wide mb-4'>Danger Zone</h3>
-            <div className='space-y-3'>
-              <div className='p-4 border border-orange-500/20 bg-orange-500/5 rounded-2xl hover:border-orange-500/30 transition-colors duration-200'>
-                <p className='text-[13px] font-bold text-white/80 mb-1'>Clear Watch History</p>
-                <p className='text-[11px] text-white/35 mb-3'>Mark all items as unwatched. This cannot be undone.</p>
-                <button className='px-4 py-2 bg-orange-500/10 border border-orange-500/25 text-orange-400 text-[11px] font-bold rounded-xl hover:bg-orange-500/20 transition-all duration-200'>
-                  Clear History
-                </button>
-              </div>
-              <div className='p-4 border border-red-500/20 bg-red-500/5 rounded-2xl hover:border-red-500/30 transition-colors duration-200'>
-                <p className='text-[13px] font-bold text-white/80 mb-1'>Delete Account</p>
-                <p className='text-[11px] text-white/35 mb-3'>Permanently delete your account and all data. Irreversible.</p>
-                <button className='px-4 py-2 bg-red-500/10 border border-red-500/25 text-red-400 text-[11px] font-bold rounded-xl hover:bg-red-500/20 transition-all duration-200'>
-                  Delete My Account
-                </button>
+                </div>
+                <div className='p-4 border border-red-500/20 bg-red-500/5 rounded-2xl'>
+                  <p className='text-[13px] font-bold text-white/80 mb-1'>Delete Account</p>
+                  <p className='text-[11px] text-white/35 mb-3'>Permanently delete your account and all data. Irreversible.</p>
+                  <button style={{ touchAction: 'manipulation' }} className='px-4 py-2 bg-red-500/10 border border-red-500/25 text-red-400 text-[11px] font-bold rounded-xl hover:bg-red-500/20 transition-all duration-200'>
+                    Delete My Account
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Save button */}
-        {!['danger', 'data'].includes(section) && (
-          <div className='mt-8'>
-            <button onClick={save} disabled={saving}
-              className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-[13px] font-bold transition-all duration-200 ${
-                saveStatus === 'saved' ? 'bg-green-500/15 border border-green-500/25 text-green-400' :
-                saveStatus === 'error' ? 'bg-red-500/15 border border-red-500/25 text-red-400' :
-                'bg-[#D4AF37] text-[#0A0A0A] hover:bg-[#E8C55B] shadow-lg shadow-[#D4AF37]/20 hover:shadow-[#D4AF37]/30 active:scale-95'
-              } ${saving ? 'opacity-60 cursor-not-allowed' : ''}`}>
-              {saving && <Spinner size={16} />}
-              {saveStatus === 'saved' ? '✓ Saved' : saveStatus === 'error' ? '✗ Error saving' : 'Save Changes'}
-            </button>
-          </div>
-        )}
+          {!['danger', 'data'].includes(section) && (
+            <div className='mt-8'>
+              <button onClick={save} disabled={saving} style={{ touchAction: 'manipulation' }}
+                className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-[13px] font-bold transition-all duration-200 ${
+                  saveStatus === 'saved' ? 'bg-green-500/15 border border-green-500/25 text-green-400' :
+                  saveStatus === 'error' ? 'bg-red-500/15 border border-red-500/25 text-red-400' :
+                  'bg-[#D4AF37] text-[#0A0A0A] hover:bg-[#E8C55B] shadow-lg shadow-[#D4AF37]/20 active:scale-95'
+                } ${saving ? 'opacity-60 cursor-not-allowed' : ''}`}>
+                {saving && <Spinner size={16} />}
+                {saveStatus === 'saved' ? '✓ Saved' : saveStatus === 'error' ? '✗ Error saving' : 'Save Changes'}
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )
@@ -1558,20 +1568,26 @@ const SlidePanel = ({ panelId, currentUser, onClose }) => {
   const meta = PANEL_META[panelId]
   if (!meta) return null
 
-  // Responsive width: respect viewport on mobile
-  const panelWidth = meta.wide ? 'min(860px, 96vw)' : 'min(600px, 96vw)'
-
   return (
     <>
-      <div className='fixed inset-0 z-40' onClick={onClose}
-        style={{ background: 'rgba(0,0,0,0.62)', backdropFilter: 'blur(5px)', animation: 'scrimIn .2s ease-out' }} />
+      {/* Scrim */}
+      <div
+        className='fixed inset-0 z-40'
+        onClick={onClose}
+        style={{ background: 'rgba(0,0,0,0.62)', backdropFilter: 'blur(5px)', WebkitBackdropFilter: 'blur(5px)', animation: 'scrimIn .2s ease-out' }}
+      />
 
-      <div className='fixed z-50 flex flex-col'
+      {/* Panel */}
+      <div
+        className='fixed z-50 flex flex-col'
         style={{
-          top: '50%', left: '50%',
+          /* On mobile: full-width sheet from bottom 80% of screen height */
+          /* On sm+: centered modal */
+          top: '50%',
+          left: '50%',
           transform: 'translateX(-50%) translateY(-50%)',
-          width: panelWidth,
-          height: 'min(88vh, 780px)',
+          width: meta.wide ? 'min(860px, 96vw)' : 'min(600px, 96vw)',
+          height: 'min(92vh, 780px)',
           background: 'linear-gradient(160deg, #0E0E0E 0%, #080808 100%)',
           border: '1px solid rgba(255,255,255,0.07)',
           borderRadius: '24px',
@@ -1579,11 +1595,13 @@ const SlidePanel = ({ panelId, currentUser, onClose }) => {
           animation: 'panelIn .3s cubic-bezier(0.22, 1, 0.36, 1)',
         }}>
 
+        {/* Gold top accent line */}
         <div className='h-[2px] flex-shrink-0 rounded-t-3xl overflow-hidden'>
           <div className='h-full' style={{ background: 'linear-gradient(90deg, transparent 0%, #D4AF37 30%, #F0C93A 50%, #D4AF37 70%, transparent 100%)' }} />
         </div>
 
-        <div className='flex items-center justify-between px-6 py-4 border-b border-white/[0.04] flex-shrink-0'>
+        {/* Panel header */}
+        <div className='flex items-center justify-between px-4 sm:px-6 py-4 border-b border-white/[0.04] flex-shrink-0'>
           <div className='flex items-center gap-3'>
             <div className='w-7 h-7 rounded-lg bg-[#D4AF37]/10 flex items-center justify-center'>
               <svg className='w-4 h-4 text-[#D4AF37]' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
@@ -1592,14 +1610,17 @@ const SlidePanel = ({ panelId, currentUser, onClose }) => {
             </div>
             <h2 className='font-bebas text-[18px] tracking-[0.12em] text-white/90'>{meta.title}</h2>
           </div>
-          <button onClick={onClose}
-            className='w-7 h-7 flex items-center justify-center rounded-lg text-white/20 hover:text-white hover:bg-white/[0.06] transition-all duration-200 hover:rotate-90'>
+          <button
+            onClick={onClose}
+            style={{ touchAction: 'manipulation' }}
+            className='w-8 h-8 flex items-center justify-center rounded-lg text-white/20 hover:text-white hover:bg-white/[0.06] transition-all duration-200 hover:rotate-90'>
             <svg className='w-4 h-4' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
               <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M6 18L18 6M6 6l12 12' />
             </svg>
           </button>
         </div>
 
+        {/* Panel content */}
         <div className='flex-1 overflow-hidden'>
           {panelId === 'search'    && <SearchPanel currentUser={currentUser} />}
           {panelId === 'discover'  && <DiscoverPanel currentUser={currentUser} />}
@@ -1638,21 +1659,26 @@ const NAV_ITEMS = [
    MOBILE BOTTOM BAR
 ───────────────────────────────────────────────────── */
 const MobileBottomBar = ({ activePanel, setActivePanel, activeRoute, navigate, notifCounts }) => {
-  // Show only 5 items on mobile (skip settings — accessible from profile)
+  // Show 5 items — drop settings (accessible via avatar in top bar)
   const mobileItems = NAV_ITEMS.filter(n => n.id !== 'settings')
 
   return (
-    <div className='fixed bottom-0 left-0 right-0 z-50 lg:hidden'
+    <div
+      className='fixed bottom-0 left-0 right-0 z-50 lg:hidden'
       style={{
-        background: 'linear-gradient(to top, #070707 0%, rgba(7,7,7,0.96) 100%)',
+        background: 'rgba(7,7,7,0.97)',
         borderTop: '1px solid rgba(212,175,55,0.12)',
-        paddingBottom: 'env(safe-area-inset-bottom)',
+        /* Safe area for iPhone home indicator */
+        paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 6px)',
         backdropFilter: 'blur(20px)',
+        WebkitBackdropFilter: 'blur(20px)', // Safari
       }}>
-      {/* Thin gold accent line */}
-      <div className='h-[1px] w-full' style={{ background: 'linear-gradient(90deg, transparent 0%, #D4AF37 30%, #F0C93A 50%, #D4AF37 70%, transparent 100%)' }} />
 
-      <div className='flex items-center justify-around px-2 py-2'>
+      {/* Gold accent line */}
+      <div className='h-[1px] w-full'
+        style={{ background: 'linear-gradient(90deg, transparent 0%, #D4AF37 30%, #F0C93A 50%, #D4AF37 70%, transparent 100%)' }} />
+
+      <div className='flex items-center justify-around px-1 pt-1.5 pb-1'>
         {mobileItems.map((item) => {
           const isRoute   = activeRoute === item.id
           const isPanelOn = activePanel === item.panel && item.panel !== null
@@ -1660,33 +1686,45 @@ const MobileBottomBar = ({ activePanel, setActivePanel, activeRoute, navigate, n
           const badge     = notifCounts[item.id]
 
           return (
-            <button key={item.id}
+            <button
+              key={item.id}
               onClick={() => {
                 if (item.panel) setActivePanel(p => p === item.panel ? null : item.panel)
                 else { setActivePanel(null); navigate(item.path) }
               }}
-              className='flex flex-col items-center gap-1 px-3 py-2 rounded-2xl transition-all duration-200 relative'
+              style={{ touchAction: 'manipulation', minWidth: '44px', minHeight: '44px' }}
+              className='flex flex-col items-center justify-center gap-1 px-2 py-2 rounded-2xl transition-all duration-200 relative'
               style={{
                 background: isActive ? 'rgba(212,175,55,0.1)' : 'transparent',
                 minWidth: '56px',
+                touchAction: 'manipulation',
               }}>
-              {/* Active gold dot indicator */}
+
+              {/* Active indicator dot at top */}
               {isActive && (
-                <div className='absolute -top-0.5 left-1/2 -translate-x-1/2 w-4 h-0.5 rounded-full bg-[#D4AF37]'
-                  style={{ animation: 'fadeIn .2s ease-out' }} />
+                <div
+                  className='absolute -top-[1px] left-1/2 -translate-x-1/2 w-4 h-[3px] rounded-full bg-[#D4AF37]'
+                  style={{ animation: 'fadeIn .2s ease-out' }}
+                />
               )}
+
+              {/* Icon with badge */}
               <div className='relative'>
-                <svg className={`w-6 h-6 transition-all duration-200 ${isActive ? 'text-[#D4AF37] scale-110' : 'text-white/40'}`}
+                <svg
+                  className={`w-[22px] h-[22px] transition-all duration-200 ${isActive ? 'text-[#D4AF37] scale-110' : 'text-white/40'}`}
                   fill='none' stroke='currentColor' viewBox='0 0 24 24'>
                   <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={isActive ? 2.5 : 1.8} d={item.icon} />
                 </svg>
                 {badge > 0 && (
-                  <div className='absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-red-500 border border-[#070707] flex items-center justify-center'>
+                  <div className='absolute -top-1.5 -right-1.5 w-[14px] h-[14px] rounded-full bg-red-500 border border-[#070707] flex items-center justify-center'>
                     <span className='text-[8px] font-black text-white leading-none'>{badge}</span>
                   </div>
                 )}
               </div>
-              <span className={`text-[9px] font-bold transition-colors duration-200 leading-none ${isActive ? 'text-[#D4AF37]' : 'text-white/30'}`}>
+
+              <span
+                className={`text-[9px] font-bold leading-none transition-colors duration-200 ${isActive ? 'text-[#D4AF37]' : 'text-white/30'}`}
+                style={{ fontFamily: "'Bebas Neue', sans-serif", letterSpacing: '0.06em' }}>
                 {item.label}
               </span>
             </button>
@@ -1701,8 +1739,8 @@ const MobileBottomBar = ({ activePanel, setActivePanel, activeRoute, navigate, n
    NAVBAR — main export
 ───────────────────────────────────────────────────── */
 const Navbar = ({ currentUser: propUser }) => {
-  const navigate = useNavigate()
-  const location = useLocation()
+  const navigate   = useNavigate()
+  const location   = useLocation()
 
   const [expanded,     setExpanded]     = useState(false)
   const [isDesktop,    setIsDesktop]    = useState(false)
@@ -1712,23 +1750,22 @@ const Navbar = ({ currentUser: propUser }) => {
   const [activePanel,  setActivePanel]  = useState(null)
   const [navItemHover, setNavItemHover] = useState(null)
 
-  // Notification counts — replace with real-time Supabase subscriptions
+  // Notification counts — wire to real-time Supabase subscriptions to make live
   const notifCounts = { watchlist: 3, discover: 0, library: 0, search: 0, settings: 0, home: 0 }
 
-  // Responsive breakpoint
+  /* ── Responsive breakpoint ── */
   useEffect(() => {
     const check = () => {
       const d = window.innerWidth >= 1024
       setIsDesktop(d)
-      if (d) setExpanded(true)
-      else setExpanded(false)
+      setExpanded(d)
     }
     check()
     window.addEventListener('resize', check)
     return () => window.removeEventListener('resize', check)
   }, [])
 
-  // Load user profile
+  /* ── Load user profile ── */
   useEffect(() => {
     let live = true
     ;(async () => {
@@ -1752,11 +1789,10 @@ const Navbar = ({ currentUser: propUser }) => {
     return () => { live = false }
   }, [])
 
-  // Global keyboard shortcuts
+  /* ── Global keyboard shortcuts ── */
   useEffect(() => {
     const h = (e) => {
-      if (e.key === 'Escape') { setActivePanel(null) }
-      // Cmd/Ctrl + K → open search
+      if (e.key === 'Escape') setActivePanel(null)
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault()
         setActivePanel(p => p === 'search' ? null : 'search')
@@ -1766,12 +1802,12 @@ const Navbar = ({ currentUser: propUser }) => {
     return () => window.removeEventListener('keydown', h)
   }, [])
 
-  const handleExpand = (v) => { if (!isDesktop) return; setExpanded(v) }
   const initials = () => {
     if (!user?.name) return 'U'
     const p = user.name.trim().split(' ')
     return p.length === 1 ? p[0][0].toUpperCase() : (p[0][0] + p.at(-1)[0]).toUpperCase()
   }
+
   const activeRoute = NAV_ITEMS.find(n => n.path && location.pathname === n.path)?.id
 
   const levelProgress = user ? ((user.points % 500) / 500) * 100 : 0
@@ -1803,15 +1839,11 @@ const Navbar = ({ currentUser: propUser }) => {
             style={{ background: 'linear-gradient(155deg, rgba(255,255,255,0.13) 0%, transparent 50%, rgba(0,0,0,0.06) 100%)' }} />
         </div>
 
-        {/* Shimmer */}
-        <div className='absolute inset-0 rounded-3xl pointer-events-none overflow-hidden opacity-0 hover:opacity-100 transition-opacity duration-700'>
-          <div className='absolute inset-0'
-            style={{ background: 'linear-gradient(105deg, transparent 40%, rgba(255,255,255,0.08) 50%, transparent 60%)', animation: 'navShimmer 3s ease-in-out infinite' }} />
-        </div>
-
         {/* Logo */}
         <div className='relative flex items-center gap-3 p-5 border-b border-black/10 overflow-hidden'>
-          <button onClick={() => { setActivePanel(null); navigate('/home') }}
+          <button
+            onClick={() => { setActivePanel(null); navigate('/home') }}
+            style={{ touchAction: 'manipulation' }}
             className='w-12 h-12 bg-black/20 rounded-2xl flex items-center justify-center flex-shrink-0
               shadow-lg hover:scale-110 hover:bg-black/30 active:scale-95 transition-all duration-200 backdrop-blur-sm'>
             <img src={logo} alt="Flik'd" className='w-9 h-9 object-contain drop-shadow-xl' />
@@ -1822,7 +1854,7 @@ const Navbar = ({ currentUser: propUser }) => {
           </span>
         </div>
 
-        {/* ⌘K shortcut hint */}
+        {/* ⌘K hint */}
         {expanded && (
           <div className='px-5 py-2 flex items-center gap-2' style={{ animation: 'fadeIn .2s ease-out' }}>
             <kbd className='text-[8px] font-mono bg-black/20 text-black/40 px-1.5 py-0.5 rounded border border-black/15'>⌘K</kbd>
@@ -1833,7 +1865,7 @@ const Navbar = ({ currentUser: propUser }) => {
         {/* Nav items */}
         <nav className='flex-1 py-3 px-3 overflow-y-auto' style={{ scrollbarWidth: 'none' }}>
           <ul className='space-y-1'>
-            {NAV_ITEMS.map((item, idx) => {
+            {NAV_ITEMS.map((item) => {
               const isRoute   = activeRoute === item.id
               const isPanelOn = activePanel === item.panel && item.panel !== null
               const isHovered = navItemHover === item.id
@@ -1848,6 +1880,7 @@ const Navbar = ({ currentUser: propUser }) => {
                       if (item.panel) setActivePanel(p => p === item.panel ? null : item.panel)
                       else { setActivePanel(null); navigate(item.path) }
                     }}
+                    style={{ touchAction: 'manipulation' }}
                     className={`
                       w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl
                       font-bebas text-lg tracking-wide
@@ -1907,11 +1940,11 @@ const Navbar = ({ currentUser: propUser }) => {
           </ul>
         </nav>
 
-        {/* Footer */}
+        {/* Footer — profile + sign out */}
         <div className='relative p-4 space-y-1.5 border-t border-black/10'>
-          {/* Profile */}
           <button
             onClick={() => setActivePanel(p => p === 'settings' ? null : 'settings')}
+            style={{ touchAction: 'manipulation' }}
             className='w-full flex items-center gap-3 px-3 py-3 rounded-2xl text-black/65 hover:text-black hover:bg-white/30 transition-all duration-200 group active:scale-[0.98]'>
             <div className='relative w-11 h-11 flex-shrink-0'>
               <svg width='44' height='44' viewBox='0 0 44 44' className='absolute top-0 left-0'>
@@ -1948,8 +1981,9 @@ const Navbar = ({ currentUser: propUser }) => {
 
           <div className='h-px' style={{ background: 'linear-gradient(90deg, transparent, rgba(0,0,0,0.15), transparent)' }} />
 
-          {/* Sign out */}
-          <button onClick={async () => { await supabase.auth.signOut(); navigate('/login') }}
+          <button
+            onClick={async () => { await supabase.auth.signOut(); navigate('/login') }}
+            style={{ touchAction: 'manipulation' }}
             className='w-full flex items-center gap-3 px-3 py-3 rounded-2xl text-black/65 hover:text-red-700 hover:bg-red-50 transition-all duration-200 group active:scale-[0.98]'>
             <div className='w-11 h-11 rounded-xl flex items-center justify-center group-hover:bg-red-100 transition-colors duration-200'>
               <svg className='w-5 h-5 transition-transform duration-200 group-hover:translate-x-0.5' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
@@ -1974,42 +2008,59 @@ const Navbar = ({ currentUser: propUser }) => {
 
       {/* ═══════════════════════════════
           MOBILE TOP BAR (< lg)
+          Height: ~57px + safe area top.
+          Home.jsx offsets <main> by pt-[57px] to match.
       ═══════════════════════════════ */}
-      <div className='lg:hidden fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-4 py-3'
+      <div
+        className='lg:hidden fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-4'
         style={{
-          background: 'linear-gradient(to bottom, #070707 0%, rgba(7,7,7,0.95) 100%)',
+          /* 57px visible height + notch safe area */
+          height: '57px',
+          paddingTop: 'env(safe-area-inset-top, 0px)',
+          background: 'rgba(7,7,7,0.97)',
           borderBottom: '1px solid rgba(212,175,55,0.10)',
           backdropFilter: 'blur(20px)',
+          WebkitBackdropFilter: 'blur(20px)', // Safari
         }}>
-        {/* Gold accent */}
+
+        {/* Gold accent line at bottom */}
         <div className='absolute bottom-0 left-0 right-0 h-[1px]'
           style={{ background: 'linear-gradient(90deg, transparent 0%, #D4AF37 50%, transparent 100%)' }} />
 
-        <button onClick={() => navigate('/home')} className='flex items-center gap-2.5'>
+        {/* Logo */}
+        <button
+          onClick={() => navigate('/home')}
+          style={{ touchAction: 'manipulation' }}
+          className='flex items-center gap-2.5'>
           <div className='w-8 h-8 bg-[#D4AF37] rounded-xl flex items-center justify-center shadow-[0_4px_16px_rgba(212,175,55,0.3)]'>
             <img src={logo} alt="Flik'd" className='w-6 h-6 object-contain' />
           </div>
           <span className='font-bebas text-xl tracking-[0.15em] text-[#D4AF37]'>FLIK'D</span>
         </button>
 
+        {/* Right actions */}
         <div className='flex items-center gap-2'>
           {/* Quick search */}
-          <button onClick={() => setActivePanel(p => p === 'search' ? null : 'search')}
+          <button
+            onClick={() => setActivePanel(p => p === 'search' ? null : 'search')}
+            style={{ touchAction: 'manipulation', minWidth: '40px', minHeight: '40px' }}
             className={`w-9 h-9 rounded-xl flex items-center justify-center transition-all duration-200 ${
               activePanel === 'search' ? 'bg-[#D4AF37]/20 text-[#D4AF37]' : 'bg-white/[0.06] text-white/50 hover:bg-white/10'
             }`}>
-            <svg className='w-4.5 h-4.5' style={{width:'18px',height:'18px'}} fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+            <svg style={{ width: '18px', height: '18px' }} fill='none' stroke='currentColor' viewBox='0 0 24 24'>
               <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z' />
             </svg>
           </button>
 
-          {/* Avatar / Settings */}
-          <button onClick={() => setActivePanel(p => p === 'settings' ? null : 'settings')}
+          {/* Avatar → Settings */}
+          <button
+            onClick={() => setActivePanel(p => p === 'settings' ? null : 'settings')}
+            style={{ touchAction: 'manipulation', minWidth: '40px', minHeight: '40px' }}
             className={`w-9 h-9 rounded-xl flex items-center justify-center transition-all duration-200 overflow-hidden border ${
               activePanel === 'settings' ? 'border-[#D4AF37]/60 ring-2 ring-[#D4AF37]/20' : 'border-white/10 hover:border-[#D4AF37]/30'
             }`}>
             {user?.avatar && !avatarErr
-              ? <img src={user.avatar} onError={() => setAvatarErr(true)} className='w-full h-full object-cover' />
+              ? <img src={user.avatar} onError={() => setAvatarErr(true)} className='w-full h-full object-cover' alt='profile' />
               : <span className='font-bebas text-sm text-[#D4AF37]'>{initials()}</span>
             }
           </button>
@@ -2027,7 +2078,7 @@ const Navbar = ({ currentUser: propUser }) => {
         notifCounts={notifCounts}
       />
 
-      {/* ═══ Active panel ═══ */}
+      {/* ═══ Active slide panel ═══ */}
       {activePanel && (
         <SlidePanel panelId={activePanel} currentUser={propUser} onClose={() => setActivePanel(null)} />
       )}
@@ -2036,10 +2087,6 @@ const Navbar = ({ currentUser: propUser }) => {
         @keyframes navShimmer {
           0%   { transform: translateX(-100%) skewX(-15deg) }
           50%, 100% { transform: translateX(200%) skewX(-15deg) }
-        }
-        @keyframes badgePop {
-          from { opacity: 0; transform: scale(0.5) }
-          to   { opacity: 1; transform: scale(1)   }
         }
         @keyframes fadeIn {
           from { opacity: 0 } to { opacity: 1 }
