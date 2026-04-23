@@ -1,766 +1,751 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react'
-import supabase from '../../config/SupabaseClient'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 
 /**
- * FLIK'D — AI Quiz System (Polished v2)
- * ─────────────────────────────────────
- * Centered modal with smooth animations, refined feedback,
- * and improved visual design maintaining the gold/dark aesthetic.
+ * QuizModal — Standalone AI Quiz Component
+ * ─────────────────────────────────────────
+ * Fully self-contained modal for AI-powered quiz verification.
+ * Replaces any inline quiz logic throughout the app.
+ *
+ * Quiz types:
+ *   'movie'   → 5 questions, 60% pass, 1-day cooldown
+ *   'episode' → 2 questions, 50% pass, no cooldown
+ *   'season'  → 10 questions, 80% pass, 7-day cooldown
+ *   'list'    → 3 questions, 60% pass, 1-day cooldown  ← NEW for navbar lists
+ *
+ * Props:
+ *   type        - 'movie' | 'episode' | 'season' | 'list'
+ *   title       - Content title
+ *   seasonNum   - (optional) for episode/season types
+ *   episodeNum  - (optional) for episode type
+ *   episodeName - (optional) for episode type
+ *   posterPath  - (optional) TMDB poster path
+ *   refId       - Unique reference ID for cooldown tracking
+ *   userId      - Current user ID
+ *   onPass      - Callback on successful quiz completion
+ *   onClose     - Callback to close modal
+ *   onFail      - (optional) Callback on failed quiz
  */
 
 const OPENAI_KEY = import.meta.env.VITE_OPENAI_API_KEY
 
 const QUIZ_CONFIG = {
-  movie:   { count: 5,  pass: 0.60, cooldownDays: 1, label: 'Film Quiz',      icon: '🎬' },
-  episode: { count: 2,  pass: 0.50, cooldownDays: 0, label: 'Episode Check',  icon: '📺' },
-  season:  { count: 10, pass: 0.80, cooldownDays: 7, label: 'Season Mastery', icon: '🏆' },
+  movie:   { questions: 5,  passRate: 0.60, cooldownDays: 1,  label: 'Movie Verification',   emoji: '🎬', color: '#D4AF37' },
+  episode: { questions: 2,  passRate: 0.50, cooldownDays: 0,  label: 'Episode Check',         emoji: '📺', color: '#60A5FA' },
+  season:  { questions: 10, passRate: 0.80, cooldownDays: 7,  label: 'Season Completion',     emoji: '🏆', color: '#A78BFA' },
+  list:    { questions: 3,  passRate: 0.60, cooldownDays: 1,  label: 'List Item Verified',    emoji: '📋', color: '#34D399' },
 }
 
-/* ─── Spinner ── */
+/* ─── Cooldown helpers ─────────────────────────────── */
+export const checkQuizCooldown = async (userId, refId, type) => {
+  const cfg = QUIZ_CONFIG[type]
+  if (!cfg || cfg.cooldownDays === 0) return { blocked: false }
+  try {
+    const key  = `quiz_cooldown_${userId}_${refId}`
+    const stored = localStorage.getItem(key)
+    if (!stored) return { blocked: false }
+    const { passedAt } = JSON.parse(stored)
+    const daysSince = (Date.now() - new Date(passedAt)) / 86_400_000
+    if (daysSince < cfg.cooldownDays) {
+      const hoursLeft = Math.ceil((cfg.cooldownDays - daysSince) * 24)
+      return { blocked: true, hoursLeft }
+    }
+    return { blocked: false }
+  } catch { return { blocked: false } }
+}
+
+export const recordQuizPass = (userId, refId, type, score) => {
+  try {
+    const key = `quiz_cooldown_${userId}_${refId}`
+    localStorage.setItem(key, JSON.stringify({ passedAt: new Date().toISOString(), score, type }))
+  } catch {}
+}
+
+/* ─── Spinner ──────────────────────────────────────── */
 const Spin = ({ size = 20, color = '#D4AF37' }) => (
   <svg width={size} height={size} viewBox='0 0 24 24' fill='none'
-    style={{ animation: 'quizSpin 0.8s linear infinite', flexShrink: 0 }}>
-    <circle cx='12' cy='12' r='10' stroke={color} strokeWidth='3' opacity='0.15' />
-    <path fill={color} opacity='0.8' d='M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z' />
+    style={{ animation: 'spin 0.8s linear infinite', color, flexShrink: 0 }}>
+    <circle cx='12' cy='12' r='10' stroke='currentColor' strokeWidth='3' opacity='0.2' />
+    <path fill='currentColor' opacity='0.8' d='M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z' />
   </svg>
 )
 
-/* ─── Score ring with animation ── */
-const ScoreRing = ({ pct, pass, size = 96 }) => {
-  const [animated, setAnimated] = useState(0)
-  useEffect(() => {
-    const t = setTimeout(() => setAnimated(pct), 120)
-    return () => clearTimeout(t)
-  }, [pct])
-  const R = size / 2 - 7
+/* ─── Progress ring ─────────────────────────────────── */
+const ProgressRing = ({ pct, size = 80, stroke = 6, color = '#D4AF37', children }) => {
+  const R = (size - stroke) / 2
   const C = 2 * Math.PI * R
-  const passed = pct >= pass
-  const color = passed ? '#D4AF37' : pct >= pass * 0.75 ? '#F59E0B' : '#EF4444'
   return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-      <circle cx={size/2} cy={size/2} r={R} fill='none' stroke='rgba(255,255,255,0.04)' strokeWidth='6' />
-      <circle cx={size/2} cy={size/2} r={R} fill='none' stroke={color} strokeWidth='6'
-        strokeDasharray={`${C * animated} ${C}`} strokeLinecap='round'
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ flexShrink: 0 }}>
+      <circle cx={size/2} cy={size/2} r={R} fill='none' stroke='rgba(255,255,255,0.06)' strokeWidth={stroke} />
+      <circle cx={size/2} cy={size/2} r={R} fill='none' stroke={color} strokeWidth={stroke}
+        strokeDasharray={`${C * pct / 100} ${C}`} strokeLinecap='round'
         transform={`rotate(-90 ${size/2} ${size/2})`}
-        style={{ transition: 'stroke-dasharray 1.2s cubic-bezier(0.34, 1.56, 0.64, 1)' }} />
-      <text x={size/2} y={size/2 + 1} textAnchor='middle' dominantBaseline='middle'
-        style={{ fontSize: size * 0.2, fontWeight: 800, fill: color, fontFamily: 'system-ui' }}>
-        {Math.round(pct * 100)}%
-      </text>
-      <text x={size/2} y={size/2 + size * 0.2} textAnchor='middle'
-        style={{ fontSize: size * 0.1, fill: 'rgba(255,255,255,0.3)', fontFamily: 'system-ui' }}>
-        {passed ? 'PASSED' : 'FAILED'}
-      </text>
+        style={{ transition: 'stroke-dasharray 0.5s ease' }} />
+      {children}
     </svg>
   )
 }
 
-/* ─── Cache system (unchanged from v1) ── */
-const MIN_POOL         = 15
-const EXPAND_THRESHOLD = 30
-const TOPUP_BATCH      = 10
-const LS_PREFIX        = 'flikd_quiz_'
-const memoryCache      = new Map()
+/* ─── Generate quiz via OpenAI ─────────────────────── */
+const generateQuiz = async (type, title, seasonNum, episodeNum, episodeName) => {
+  const cfg = QUIZ_CONFIG[type]
+  let prompt = ''
 
-const buildCacheKey = ({ type, title, seasonNum, episodeNum }) => {
-  const slug = title.toLowerCase().replace(/[^a-z0-9]/g, '_').replace(/_+/g, '_').slice(0, 48)
-  if (type === 'movie')   return `movie__${slug}`
-  if (type === 'episode') return `ep__${slug}__s${seasonNum}e${episodeNum}`
-  if (type === 'season')  return `season__${slug}__s${seasonNum}`
-  return `unknown__${slug}`
-}
-const shuffle = (arr) => {
-  const a = [...arr]
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1))
-    ;[a[i], a[j]] = [a[j], a[i]]
+  if (type === 'movie') {
+    prompt = `Generate ${cfg.questions} multiple-choice trivia questions about the movie "${title}". Questions should test genuine knowledge (plot, characters, themes, director, year). Each question must have 4 options with exactly one correct answer. Return ONLY valid JSON in this exact format: {"questions":[{"q":"Question text","options":["A","B","C","D"],"answer":0}]} where answer is the 0-based index of the correct option.`
+  } else if (type === 'episode') {
+    prompt = `Generate ${cfg.questions} multiple-choice questions about Season ${seasonNum}, Episode ${episodeNum} "${episodeName}" of the TV show "${title}". Focus on episode-specific events. Return ONLY valid JSON: {"questions":[{"q":"Question text","options":["A","B","C","D"],"answer":0}]}`
+  } else if (type === 'season') {
+    prompt = `Generate ${cfg.questions} multiple-choice questions covering Season ${seasonNum} of "${title}". Test knowledge of major plot points, character arcs, and key moments across the season. Return ONLY valid JSON: {"questions":[{"q":"Question text","options":["A","B","C","D"],"answer":0}]}`
+  } else if (type === 'list') {
+    prompt = `Generate ${cfg.questions} general knowledge multiple-choice questions about "${title}" (could be a movie or TV show). Make them moderately challenging. Return ONLY valid JSON: {"questions":[{"q":"Question text","options":["A","B","C","D"],"answer":0}]}`
   }
-  return a
-}
-const dedupeQuestions = (questions) => {
-  const seen = new Set()
-  return questions.filter(q => {
-    const key = q.q.toLowerCase().trim()
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
-}
-const lsRead = (key) => {
-  try { const raw = localStorage.getItem(LS_PREFIX + key); return raw ? JSON.parse(raw) : null } catch { return null }
-}
-const lsWrite = (key, data) => {
-  try { localStorage.setItem(LS_PREFIX + key, JSON.stringify(data)) } catch {}
-}
-const dbReadPool = async (cacheKey) => {
-  try {
-    const { data } = await supabase.from('quiz_question_pool').select('questions, use_count').eq('cache_key', cacheKey).single()
-    return data || null
-  } catch { return null }
-}
-const dbWritePool = async (cacheKey, questions) => {
-  try {
-    const existing = await dbReadPool(cacheKey)
-    const merged = existing ? dedupeQuestions([...existing.questions, ...questions]) : dedupeQuestions(questions)
-    await supabase.from('quiz_question_pool').upsert({ cache_key: cacheKey, questions: merged, updated_at: new Date().toISOString(), use_count: (existing?.use_count || 0) }, { onConflict: 'cache_key' })
-    return merged
-  } catch { return questions }
-}
-const dbIncrementUse = (cacheKey) => {
-  supabase.rpc('increment_quiz_pool_use_count', { key: cacheKey }).catch(() => {})
-}
 
-const callOpenAI = async ({ title, type, seasonNum, episodeNum, episodeName, count }) => {
-  if (!OPENAI_KEY) throw new Error('No OpenAI API key configured.')
-  const context = type === 'movie' ? `the film "${title}"` : type === 'episode' ? `Season ${seasonNum} Episode ${episodeNum} "${episodeName}" of "${title}"` : `Season ${seasonNum} of "${title}"`
-  const prompt = type === 'season'
-    ? `Generate ${count} multiple-choice quiz questions testing deep knowledge of ${context}. Cover different aspects: plot arcs, character development, episode-specific events, themes, and notable moments. Make questions challenging — 80%+ pass rate for attentive viewers.`
-    : type === 'episode'
-      ? `Generate ${count} multiple-choice questions about ${context}. Focus on specific plot events, dialogue, and character actions that only someone who watched this episode would know.`
-      : `Generate ${count} multiple-choice questions about ${context}. Mix easy (40%), medium (40%), and hard (20%) questions covering plot, characters, themes, and notable scenes.`
-  const systemPrompt = `You are a film and TV quiz generator for a cinema app called Flik'd. Return ONLY a valid JSON array with no markdown. Each question: {"q": string, "opts": string[] (exactly 4), "answer": number (0-indexed), "difficulty": "easy"|"medium"|"hard"}`
+  if (!OPENAI_KEY) {
+    // Fallback mock questions for development
+    return Array.from({ length: cfg.questions }, (_, i) => ({
+      q: `Sample question ${i + 1} about ${title}?`,
+      options: ['Option A', 'Option B', 'Option C', 'Option D'],
+      answer: Math.floor(Math.random() * 4),
+    }))
+  }
+
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${OPENAI_KEY}` },
-    body: JSON.stringify({ model: 'gpt-4o-mini', temperature: 0.85, max_tokens: 2400, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: prompt }] }),
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${OPENAI_KEY}`,
+    },
+    body: JSON.stringify({
+      model: 'gpt-4o-mini',
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.7,
+      max_tokens: 1500,
+    }),
   })
-  if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err?.error?.message || `OpenAI error ${res.status}`) }
+
+  if (!res.ok) throw new Error(`OpenAI ${res.status}`)
   const data = await res.json()
-  const raw = data.choices?.[0]?.message?.content?.trim() || '[]'
-  const clean = raw.replace(/^```(?:json)?|```$/gm, '').trim()
-  try {
-    const parsed = JSON.parse(clean)
-    if (!Array.isArray(parsed) || parsed.length === 0) throw new Error('Empty quiz returned')
-    return parsed
-  } catch { throw new Error('Could not parse quiz questions. Please try again.') }
+  const text = data.choices[0].message.content.trim()
+  const clean = text.replace(/```json|```/g, '').trim()
+  const parsed = JSON.parse(clean)
+  return parsed.questions
 }
 
-const generateQuiz = async ({ title, type, seasonNum, episodeNum, episodeName, count }) => {
-  const cacheKey = buildCacheKey({ type, title, seasonNum, episodeNum })
-  if (memoryCache.has(cacheKey)) {
-    const pool = memoryCache.get(cacheKey)
-    if (pool.length >= count) { dbIncrementUse(cacheKey); return shuffle(pool).slice(0, count).map(q => ({ ...q, _fromCache: true })) }
-  }
-  const dbRow = await dbReadPool(cacheKey)
-  if (dbRow && Array.isArray(dbRow.questions) && dbRow.questions.length >= count) {
-    const pool = dbRow.questions
-    memoryCache.set(cacheKey, pool); lsWrite(cacheKey, pool); dbIncrementUse(cacheKey)
-    if (pool.length < EXPAND_THRESHOLD) {
-      callOpenAI({ title, type, seasonNum, episodeNum, episodeName, count: TOPUP_BATCH })
-        .then(fresh => { const merged = dedupeQuestions([...pool, ...fresh]); memoryCache.set(cacheKey, merged); lsWrite(cacheKey, merged); dbWritePool(cacheKey, fresh) })
-        .catch(() => {})
+/* ─── QUIZ STATES ───────────────────────────────────── */
+// idle → loading → active → result
+
+const QuizModal = ({
+  type = 'movie',
+  title,
+  seasonNum,
+  episodeNum,
+  episodeName,
+  posterPath,
+  refId,
+  userId,
+  onPass,
+  onClose,
+  onFail,
+}) => {
+  const cfg = QUIZ_CONFIG[type]
+
+  const [phase,       setPhase]       = useState('idle')   // idle | loading | active | result
+  const [questions,   setQuestions]   = useState([])
+  const [current,     setCurrent]     = useState(0)
+  const [answers,     setAnswers]     = useState({})        // { index: chosenOptionIdx }
+  const [selected,    setSelected]    = useState(null)      // current answer choice
+  const [revealed,    setRevealed]    = useState(false)     // show correct/wrong
+  const [score,       setScore]       = useState(0)
+  const [error,       setError]       = useState(null)
+  const [timeLeft,    setTimeLeft]    = useState(30)        // per-question timer
+  const [timerActive, setTimerActive] = useState(false)
+  const timerRef = useRef(null)
+  const overlayRef = useRef(null)
+
+  const tmdbImg = (path) => path ? `https://image.tmdb.org/t/p/w342${path}` : null
+  const passCount = Math.ceil(cfg.questions * cfg.passRate)
+
+  /* ── Timer ── */
+  useEffect(() => {
+    if (!timerActive) return
+    timerRef.current = setInterval(() => {
+      setTimeLeft(t => {
+        if (t <= 1) {
+          clearInterval(timerRef.current)
+          // Auto-submit no answer
+          handleAnswer(-1)
+          return 0
+        }
+        return t - 1
+      })
+    }, 1000)
+    return () => clearInterval(timerRef.current)
+  }, [timerActive, current]) // eslint-disable-line
+
+  /* ── Start quiz ── */
+  const startQuiz = async () => {
+    setPhase('loading')
+    setError(null)
+    try {
+      const qs = await generateQuiz(type, title, seasonNum, episodeNum, episodeName)
+      setQuestions(qs)
+      setCurrent(0)
+      setAnswers({})
+      setSelected(null)
+      setRevealed(false)
+      setScore(0)
+      setTimeLeft(30)
+      setPhase('active')
+      setTimerActive(true)
+    } catch (e) {
+      setError('Failed to generate quiz. Please try again.')
+      setPhase('idle')
     }
-    return shuffle(pool).slice(0, count).map(q => ({ ...q, _fromCache: true }))
   }
-  const lsPool = lsRead(cacheKey)
-  if (lsPool && Array.isArray(lsPool) && lsPool.length >= count) {
-    memoryCache.set(cacheKey, lsPool)
-    return shuffle(lsPool).slice(0, count).map(q => ({ ...q, _fromCache: true }))
+
+  /* ── Answer selection ── */
+  const handleAnswer = useCallback((optionIdx) => {
+    if (revealed) return
+    clearInterval(timerRef.current)
+    setTimerActive(false)
+    setSelected(optionIdx)
+    setRevealed(true)
+
+    const q = questions[current]
+    const correct = optionIdx === q?.answer
+    if (correct) setScore(s => s + 1)
+    setAnswers(prev => ({ ...prev, [current]: { chosen: optionIdx, correct } }))
+  }, [revealed, questions, current])
+
+  /* ── Next question ── */
+  const nextQuestion = () => {
+    if (current + 1 >= questions.length) {
+      // Calculate final score
+      const finalScore = score + (answers[current]?.correct ? 0 : 0) // already tallied
+      endQuiz()
+    } else {
+      setCurrent(c => c + 1)
+      setSelected(null)
+      setRevealed(false)
+      setTimeLeft(30)
+      setTimerActive(true)
+    }
   }
-  const requestCount = Math.max(count, MIN_POOL)
-  const fresh = await callOpenAI({ title, type, seasonNum, episodeNum, episodeName, count: requestCount })
-  const deduped = dedupeQuestions(fresh)
-  memoryCache.set(cacheKey, deduped); lsWrite(cacheKey, deduped)
-  dbWritePool(cacheKey, deduped).catch(() => {})
-  return shuffle(deduped).slice(0, count)
-}
 
-/* ─── Cooldown check ── */
-export const checkQuizCooldown = async (userId, refId, refType) => {
-  if (!userId) return { blocked: false, nextAllowed: null }
-  const { data } = await supabase
-    .from('quiz_attempts').select('passed, taken_at, next_allowed_at')
-    .eq('user_id', userId).eq('ref_id', refId).eq('ref_type', refType)
-    .order('taken_at', { ascending: false }).limit(1).single()
-  if (!data) return { blocked: false, nextAllowed: null }
-  if (data.passed) return { blocked: false, nextAllowed: null, alreadyPassed: true }
-  if (!data.next_allowed_at) return { blocked: false, nextAllowed: null }
-  const next = new Date(data.next_allowed_at)
-  if (Date.now() < next.getTime()) return { blocked: true, nextAllowed: next }
-  return { blocked: false, nextAllowed: null }
-}
+  const endQuiz = () => {
+    clearInterval(timerRef.current)
+    setTimerActive(false)
+    setPhase('result')
+  }
 
-const saveAttempt = async ({ userId, refId, refType, score, passed, cooldownDays }) => {
-  const takenAt = new Date().toISOString()
-  const nextAllowed = cooldownDays > 0 && !passed ? new Date(Date.now() + cooldownDays * 86400000).toISOString() : null
-  await supabase.from('quiz_attempts').insert({ user_id: userId, ref_id: refId, ref_type: refType, score: Math.round(score * 100), passed, taken_at: takenAt, next_allowed_at: nextAllowed })
-  return { nextAllowed }
-}
+  useEffect(() => {
+    if (phase === 'active' && revealed) {
+      // Brief delay then auto-advance or wait for user
+    }
+  }, [revealed, phase])
 
-/* ─── Cooldown badge ── */
-const CooldownBadge = ({ nextAllowed, type, onClose }) => {
-  const config = QUIZ_CONFIG[type]
-  const ms = new Date(nextAllowed).getTime() - Date.now()
-  const hours = Math.floor(ms / 3600000)
-  const mins = Math.floor((ms % 3600000) / 60000)
-  const timeStr = hours >= 24 ? `${Math.ceil(hours / 24)} day${Math.ceil(hours / 24) !== 1 ? 's' : ''}` : hours > 0 ? `${hours}h ${mins}m` : `${mins}m`
+  /* ── Result ── */
+  const passed = score >= passCount
+  const scorePct = questions.length > 0 ? Math.round((score / questions.length) * 100) : 0
+
+  useEffect(() => {
+    if (phase === 'result' && passed) {
+      recordQuizPass(userId, refId, type, scorePct)
+    }
+  }, [phase, passed]) // eslint-disable-line
+
+  /* ── Keyboard ── */
+  useEffect(() => {
+    const h = (e) => {
+      if (e.key === 'Escape') { if (phase !== 'active') onClose() }
+      if (phase === 'active' && !revealed) {
+        if (e.key === '1') handleAnswer(0)
+        if (e.key === '2') handleAnswer(1)
+        if (e.key === '3') handleAnswer(2)
+        if (e.key === '4') handleAnswer(3)
+      }
+      if (phase === 'active' && revealed && e.key === 'Enter') nextQuestion()
+    }
+    window.addEventListener('keydown', h)
+    return () => window.removeEventListener('keydown', h)
+  }, [phase, revealed, handleAnswer]) // eslint-disable-line
+
+  /* ── Backdrop click ── */
+  const handleOverlayClick = (e) => {
+    if (e.target === overlayRef.current && phase !== 'active') onClose()
+  }
+
+  const q = questions[current]
+  const timerPct = (timeLeft / 30) * 100
+  const timerColor = timeLeft > 15 ? '#D4AF37' : timeLeft > 7 ? '#F59E0B' : '#EF4444'
+
   return (
-    <div style={{ padding: '2rem 1.75rem', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem', textAlign: 'center' }}>
-      <div style={{ width: 64, height: 64, borderRadius: '50%', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28, animation: 'quizPulse 2s ease-in-out infinite' }}>⏳</div>
-      <div>
-        <p style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 20, color: 'rgba(255,255,255,0.85)', letterSpacing: '0.06em', margin: '0 0 0.5rem' }}>Quiz Locked</p>
-        <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.4)', lineHeight: 1.6, maxWidth: 280, margin: 0 }}>
-          You didn't pass the last {config.label.toLowerCase()}. Come back in{' '}
-          <span style={{ color: '#D4AF37', fontWeight: 700 }}>{timeStr}</span> to try again.
-        </p>
+    <div
+      ref={overlayRef}
+      onClick={handleOverlayClick}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 9999,
+        background: 'rgba(0,0,0,0.88)',
+        backdropFilter: 'blur(12px)',
+        WebkitBackdropFilter: 'blur(12px)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: '16px',
+        animation: 'qOverlayIn 0.2s ease-out',
+      }}>
+
+      <div style={{
+        width: '100%', maxWidth: '560px',
+        background: 'linear-gradient(160deg, #0F0F0F 0%, #080808 100%)',
+        border: '1px solid rgba(255,255,255,0.08)',
+        borderRadius: '24px',
+        boxShadow: '0 40px 120px rgba(0,0,0,0.95), 0 0 0 1px rgba(212,175,55,0.08)',
+        overflow: 'hidden',
+        maxHeight: '90vh',
+        display: 'flex',
+        flexDirection: 'column',
+        animation: 'qModalIn 0.3s cubic-bezier(0.22,1,0.36,1)',
+      }}>
+
+        {/* Top accent line */}
+        <div style={{ height: '2px', flexShrink: 0, background: `linear-gradient(90deg, transparent, ${cfg.color}, transparent)` }} />
+
+        {/* ── IDLE PHASE ── */}
+        {phase === 'idle' && (
+          <IdleScreen
+            cfg={cfg} type={type} title={title}
+            posterPath={posterPath} tmdbImg={tmdbImg}
+            passCount={passCount}
+            onStart={startQuiz} onClose={onClose}
+            seasonNum={seasonNum} episodeNum={episodeNum}
+            episodeName={episodeName}
+          />
+        )}
+
+        {/* ── LOADING PHASE ── */}
+        {phase === 'loading' && (
+          <LoadingScreen cfg={cfg} title={title} />
+        )}
+
+        {/* ── ACTIVE PHASE ── */}
+        {phase === 'active' && q && (
+          <ActiveScreen
+            q={q} current={current} total={questions.length}
+            selected={selected} revealed={revealed}
+            score={score} passCount={passCount}
+            timeLeft={timeLeft} timerPct={timerPct} timerColor={timerColor}
+            cfg={cfg} answers={answers}
+            onAnswer={handleAnswer}
+            onNext={nextQuestion}
+            onEndQuiz={endQuiz}
+            isLastQuestion={current + 1 >= questions.length}
+          />
+        )}
+
+        {/* ── RESULT PHASE ── */}
+        {phase === 'result' && (
+          <ResultScreen
+            passed={passed} score={score} total={questions.length}
+            scorePct={scorePct} passCount={passCount}
+            cfg={cfg} title={title}
+            onPass={onPass} onRetry={startQuiz}
+            onClose={onClose} onFail={onFail}
+            answers={answers} questions={questions}
+          />
+        )}
+
+        {/* ── ERROR ── */}
+        {error && (
+          <div style={{ padding: '16px 24px', background: 'rgba(239,68,68,0.1)', borderTop: '1px solid rgba(239,68,68,0.2)' }}>
+            <p style={{ color: '#FCA5A5', fontSize: '13px', textAlign: 'center' }}>{error}</p>
+          </div>
+        )}
       </div>
-      <div style={{ padding: '0.5rem 1rem', borderRadius: 10, border: '1px solid rgba(239,68,68,0.2)', background: 'rgba(239,68,68,0.04)' }}>
-        <p style={{ fontSize: 11, color: 'rgba(239,68,68,0.6)', margin: 0 }}>
-          Required: {Math.round(config.pass * 100)}% · Cooldown: {config.cooldownDays} day{config.cooldownDays !== 1 ? 's' : ''}
-        </p>
-      </div>
-      <button onClick={onClose} style={styles.secondaryBtn}>Got it</button>
+
+      <style>{`
+        @keyframes qOverlayIn { from{opacity:0} to{opacity:1} }
+        @keyframes qModalIn { from{opacity:0;transform:scale(0.94) translateY(12px)} to{opacity:1;transform:scale(1) translateY(0)} }
+        @keyframes qFadeUp { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+        @keyframes spin { to { transform: rotate(360deg) } }
+        @keyframes qPulse { 0%,100%{opacity:1} 50%{opacity:0.6} }
+        @keyframes qShake { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-4px)} 75%{transform:translateX(4px)} }
+        @keyframes qBounce { 0%,100%{transform:scale(1)} 50%{transform:scale(1.05)} }
+      `}</style>
     </div>
   )
 }
 
-/* ─── Shared styles ── */
-const styles = {
-  primaryBtn: {
-    width: '100%', padding: '0.875rem', borderRadius: 14, border: 'none', cursor: 'pointer',
-    background: '#D4AF37', color: '#0A0A0A', fontSize: 14, fontWeight: 800,
-    transition: 'all 0.18s ease', letterSpacing: '0.02em',
-  },
-  secondaryBtn: {
-    width: '100%', padding: '0.875rem', borderRadius: 14, cursor: 'pointer',
-    background: '#141414', border: '1px solid rgba(255,255,255,0.07)', color: 'rgba(255,255,255,0.45)',
-    fontSize: 14, fontWeight: 700, transition: 'all 0.18s ease',
-  },
-}
+/* ─── IDLE SCREEN ───────────────────────────────────── */
+const IdleScreen = ({ cfg, type, title, posterPath, tmdbImg, passCount, onStart, onClose, seasonNum, episodeNum, episodeName }) => {
+  const subtitle =
+    type === 'episode' ? `S${String(seasonNum).padStart(2,'0')}E${String(episodeNum).padStart(2,'0')} · ${episodeName}` :
+    type === 'season'  ? `Season ${seasonNum}` :
+    null
 
-/* ─── Main QuizModal ── */
-const QuizModal = ({
-  type, title, seasonNum, episodeNum, episodeName, posterPath,
-  refId, userId,
-  onPass, onClose,
-}) => {
-  const config = QUIZ_CONFIG[type]
-  const [phase,      setPhase]      = useState('checking')
-  const [questions,  setQuestions]  = useState([])
-  const [current,    setCurrent]    = useState(0)
-  const [selected,   setSelected]   = useState(null)
-  const [answers,    setAnswers]     = useState([])
-  const [confirmed,  setConfirmed]  = useState(false)
-  const [result,     setResult]     = useState(null)
-  const [error,      setError]      = useState('')
-  const [cooldownAt, setCooldownAt] = useState(null)
-  const [saving,     setSaving]     = useState(false)
-  const [fromCache,  setFromCache]  = useState(false)
-  const [closing,    setClosing]    = useState(false)
-  const scrollRef = useRef(null)
-
-  const handleClose = useCallback(() => {
-    setClosing(true)
-    setTimeout(() => onClose?.(), 250)
-  }, [onClose])
-
-  /* Prevent body scroll when open */
-  useEffect(() => {
-    const orig = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    return () => { document.body.style.overflow = orig }
-  }, [])
-
-  /* Escape key */
-  useEffect(() => {
-    const h = (e) => { if (e.key === 'Escape' && (phase === 'result' || phase === 'cooldown' || phase === 'intro' || phase === 'error')) handleClose() }
-    window.addEventListener('keydown', h)
-    return () => window.removeEventListener('keydown', h)
-  }, [phase, handleClose])
-
-  /* Cooldown check */
-  useEffect(() => {
-    let live = true
-    const check = async () => {
-      try {
-        const { blocked, nextAllowed } = await checkQuizCooldown(userId, refId, type)
-        if (!live) return
-        if (blocked) { setCooldownAt(nextAllowed); setPhase('cooldown') }
-        else setPhase('intro')
-      } catch { if (live) setPhase('intro') }
-    }
-    check()
-    return () => { live = false }
-  }, [])
-
-  /* Scroll to top on question change */
-  useEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollTop = 0
-  }, [current])
-
-  const startQuiz = useCallback(async () => {
-    setPhase('loading'); setError('')
-    try {
-      const qs = await generateQuiz({ title, type, seasonNum, episodeNum, episodeName, count: config.count })
-      setFromCache(qs.some(q => q._fromCache))
-      setQuestions(qs.map(({ _fromCache: _, ...q }) => q))
-      setAnswers([]); setCurrent(0); setSelected(null); setConfirmed(false)
-      setPhase('quiz')
-    } catch (e) {
-      setError(e.message || 'Failed to generate quiz.')
-      setPhase('error')
-    }
-  }, [title, type, seasonNum, episodeNum, episodeName, config.count])
-
-  const confirmAnswer = useCallback(() => {
-    if (selected === null || confirmed) return
-    const q = questions[current]
-    const correct = selected === q.answer
-    setConfirmed(true)
-    setAnswers(prev => [...prev, { correct, selected, answer: q.answer }])
-  }, [selected, confirmed, questions, current])
-
-  const advance = useCallback(async () => {
-    if (current + 1 < questions.length) {
-      setCurrent(p => p + 1); setSelected(null); setConfirmed(false)
-    } else {
-      const finalAnswers = [...answers]
-      const score = finalAnswers.filter(a => a.correct).length / questions.length
-      const passed = score >= config.pass
-      setSaving(true)
-      try {
-        const { nextAllowed } = await saveAttempt({ userId, refId, refType: type, score, passed, cooldownDays: config.cooldownDays })
-        setResult({ score, passed, nextAllowed })
-        if (passed) onPass?.()
-      } catch {
-        setResult({ score, passed, nextAllowed: null })
-        if (passed) onPass?.()
-      }
-      setSaving(false); setPhase('result')
-    }
-  }, [current, questions, answers, config, userId, refId, type, onPass])
-
-  /* Keyboard shortcuts */
-  useEffect(() => {
-    const h = (e) => {
-      if (phase !== 'quiz') return
-      if (['1','2','3','4'].includes(e.key)) setSelected(parseInt(e.key) - 1)
-      if (e.key === 'Enter') { if (!confirmed && selected !== null) confirmAnswer(); else if (confirmed) advance() }
-    }
-    window.addEventListener('keydown', h)
-    return () => window.removeEventListener('keydown', h)
-  }, [phase, selected, confirmed, confirmAnswer, advance])
-
-  const q = questions[current]
-  const progressPct = phase === 'quiz' ? (current / questions.length) * 100 : 0
-  const tmdbImg = (p) => p ? `https://image.tmdb.org/t/p/w342${p}` : null
-
-  const DIFF = {
-    easy:   { color: '#4ade80', bg: 'rgba(74,222,128,0.08)', border: 'rgba(74,222,128,0.2)' },
-    medium: { color: '#D4AF37', bg: 'rgba(212,175,55,0.08)', border: 'rgba(212,175,55,0.2)' },
-    hard:   { color: '#f87171', bg: 'rgba(248,113,113,0.08)', border: 'rgba(248,113,113,0.2)' },
-  }
-
-  /* ─── Overlay + Modal wrapper ── */
   return (
-    <>
-      {/* Overlay */}
-      <div
-        onClick={phase === 'result' || phase === 'cooldown' || phase === 'intro' || phase === 'error' ? handleClose : undefined}
-        style={{
-          position: 'fixed', inset: 0, zIndex: 9000,
-          background: 'rgba(0,0,0,0.85)',
-          backdropFilter: 'blur(16px)',
-          WebkitBackdropFilter: 'blur(16px)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          padding: '1rem',
-          animation: closing ? 'quizFadeOut 0.22s ease-out forwards' : 'quizFadeIn 0.22s ease-out',
-        }}
-      >
-        {/* Modal */}
-        <div
-          onClick={e => e.stopPropagation()}
-          style={{
-            position: 'relative',
-            width: '100%', maxWidth: 520,
-            maxHeight: 'calc(100vh - 2rem)',
-            display: 'flex', flexDirection: 'column',
-            background: 'linear-gradient(160deg, #0E0E0E 0%, #080808 100%)',
-            border: '1px solid rgba(212,175,55,0.2)',
-            borderRadius: 24,
-            boxShadow: '0 40px 120px rgba(0,0,0,0.9), 0 0 0 1px rgba(212,175,55,0.05), inset 0 1px 0 rgba(255,255,255,0.04)',
-            animation: closing ? 'quizModalOut 0.22s ease-in forwards' : 'quizModalIn 0.32s cubic-bezier(0.22,1,0.36,1)',
-            overflow: 'hidden',
-          }}
-        >
-          {/* Gold top accent */}
-          <div style={{ height: 3, flexShrink: 0, background: 'linear-gradient(90deg, transparent, #D4AF37 20%, #F0C93A 50%, #D4AF37 80%, transparent)' }} />
+    <div style={{ overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
+      {/* Header */}
+      <div style={{ padding: '20px 24px', borderBottom: '1px solid rgba(255,255,255,0.04)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div style={{
+            width: '32px', height: '32px', borderRadius: '10px',
+            background: `${cfg.color}18`, border: `1px solid ${cfg.color}30`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px'
+          }}>{cfg.emoji}</div>
+          <div>
+            <p style={{ fontSize: '11px', fontWeight: 800, color: `${cfg.color}80`, textTransform: 'uppercase', letterSpacing: '0.15em', margin: 0 }}>{cfg.label}</p>
+            <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.25)', margin: 0 }}>Verify your watch</p>
+          </div>
+        </div>
+        <button onClick={onClose} style={{
+          width: '32px', height: '32px', borderRadius: '8px', background: 'none',
+          border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.3)',
+          cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          transition: 'all 0.2s', fontSize: '14px'
+        }}>✕</button>
+      </div>
 
-          {/* ── CHECKING ── */}
-          {phase === 'checking' && (
-            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '4rem 2rem', flexDirection: 'column', gap: '1rem' }}>
-              <Spin size={36} />
-              <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.3)', margin: 0 }}>Checking eligibility…</p>
-            </div>
-          )}
+      <div style={{ padding: '28px 24px', display: 'flex', gap: '20px', alignItems: 'flex-start' }}>
+        {/* Poster */}
+        {posterPath && (
+          <img src={tmdbImg(posterPath)} alt={title}
+            style={{
+              width: '80px', height: '118px', objectFit: 'cover', borderRadius: '12px',
+              flexShrink: 0, boxShadow: '0 12px 40px rgba(0,0,0,0.7)',
+              border: '1px solid rgba(255,255,255,0.08)'
+            }} />
+        )}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <h2 style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '26px', color: 'white', margin: '0 0 4px', letterSpacing: '0.06em', lineHeight: 1.1 }}>{title}</h2>
+          {subtitle && <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.35)', margin: '0 0 16px' }}>{subtitle}</p>}
 
-          {/* ── COOLDOWN ── */}
-          {phase === 'cooldown' && (
-            <>
-              <ModalHeader title={title} type={type} config={config} posterPath={posterPath} onClose={handleClose} />
-              <CooldownBadge nextAllowed={cooldownAt} type={type} onClose={handleClose} />
-            </>
-          )}
-
-          {/* ── INTRO ── */}
-          {phase === 'intro' && (
-            <>
-              <ModalHeader title={title} type={type} config={config} posterPath={posterPath} onClose={handleClose} />
-              <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '1.25rem 1.75rem', scrollbarWidth: 'none' }}>
-                {/* Hero card */}
-                <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem', padding: '1rem', background: 'rgba(255,255,255,0.025)', borderRadius: 14, border: '1px solid rgba(255,255,255,0.05)' }}>
-                  {posterPath && <img src={tmdbImg(posterPath)} alt={title} style={{ width: 48, height: 70, objectFit: 'cover', borderRadius: 8, flexShrink: 0, boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }} />}
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ fontSize: 10, fontWeight: 900, color: 'rgba(212,175,55,0.5)', textTransform: 'uppercase', letterSpacing: '0.18em', marginBottom: 4 }}>
-                      {type === 'movie' ? '🎬 Film' : type === 'episode' ? `📺 S${seasonNum} · E${episodeNum}` : `📦 Season ${seasonNum}`}
-                    </p>
-                    <h3 style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 20, color: '#fff', letterSpacing: '0.04em', margin: '0 0 2px', lineHeight: 1.2 }}>{title}</h3>
-                    {episodeName && <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', fontStyle: 'italic', margin: 0 }}>"{episodeName}"</p>}
-                  </div>
-                </div>
-
-                {/* Rules */}
-                <p style={{ fontSize: 9, fontWeight: 900, color: 'rgba(255,255,255,0.2)', textTransform: 'uppercase', letterSpacing: '0.2em', marginBottom: '0.75rem' }}>Quiz Rules</p>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1.25rem' }}>
-                  {[
-                    { icon: '❓', label: `${config.count} Questions`, desc: `Answer ${config.count} multiple-choice questions about this ${type === 'movie' ? 'film' : type === 'season' ? 'season' : 'episode'}.` },
-                    { icon: '🎯', label: `${Math.round(config.pass * 100)}% to Pass`, desc: `Get at least ${Math.ceil(config.count * config.pass)} out of ${config.count} correct to mark as watched.` },
-                    ...(config.cooldownDays > 0 ? [{ icon: '⏳', label: `${config.cooldownDays}-Day Cooldown`, desc: `Failed quizzes lock you out for ${config.cooldownDays} day${config.cooldownDays !== 1 ? 's' : ''} before retrying.` }] : []),
-                  ].map(({ icon, label, desc }) => (
-                    <div key={label} style={{ display: 'flex', gap: '0.875rem', padding: '0.875rem', background: 'rgba(255,255,255,0.02)', borderRadius: 12, border: '1px solid rgba(255,255,255,0.04)', alignItems: 'flex-start' }}>
-                      <span style={{ fontSize: 16, flexShrink: 0, marginTop: 1 }}>{icon}</span>
-                      <div>
-                        <p style={{ fontSize: 12, fontWeight: 700, color: 'rgba(255,255,255,0.8)', margin: '0 0 2px' }}>{label}</p>
-                        <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', margin: 0, lineHeight: 1.5 }}>{desc}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                {/* AI notice */}
-                <div style={{ display: 'flex', gap: '0.75rem', padding: '0.875rem', borderRadius: 12, border: '1px solid rgba(212,175,55,0.12)', background: 'rgba(212,175,55,0.03)', alignItems: 'flex-start', marginBottom: '0.25rem' }}>
-                  <span style={{ fontSize: 16, flexShrink: 0 }}>✨</span>
-                  <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', margin: 0, lineHeight: 1.6 }}>
-                    Questions are AI-generated specifically for this {type === 'movie' ? 'film' : type}. Only viewers who actually watched it should be able to pass.
-                  </p>
-                </div>
+          {/* Quiz info pills */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '20px' }}>
+            {[
+              { label: `${cfg.questions} Questions`, icon: '❓' },
+              { label: `${Math.round(cfg.passRate * 100)}% to Pass`, icon: '🎯' },
+              { label: `${passCount}/${cfg.questions} Needed`, icon: '✅' },
+              ...(cfg.cooldownDays > 0 ? [{ label: `${cfg.cooldownDays}d Cooldown`, icon: '⏳' }] : []),
+            ].map(({ label, icon }) => (
+              <div key={label} style={{
+                display: 'flex', alignItems: 'center', gap: '5px',
+                padding: '5px 10px', borderRadius: '20px',
+                background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)',
+              }}>
+                <span style={{ fontSize: '10px' }}>{icon}</span>
+                <span style={{ fontSize: '10px', fontWeight: 700, color: 'rgba(255,255,255,0.45)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{label}</span>
               </div>
-              <div style={{ padding: '1rem 1.75rem 1.5rem', borderTop: '1px solid rgba(255,255,255,0.04)', flexShrink: 0, display: 'flex', gap: '0.75rem' }}>
-                <button onClick={handleClose} style={styles.secondaryBtn}>Cancel</button>
-                <button onClick={startQuiz} style={{ ...styles.primaryBtn, flex: 1 }}
-                  onMouseEnter={e => { e.currentTarget.style.background = '#E8C55B'; e.currentTarget.style.transform = 'translateY(-1px)' }}
-                  onMouseLeave={e => { e.currentTarget.style.background = '#D4AF37'; e.currentTarget.style.transform = 'none' }}>
-                  Start Quiz →
-                </button>
-              </div>
-            </>
-          )}
+            ))}
+          </div>
 
-          {/* ── LOADING ── */}
-          {phase === 'loading' && (
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '4rem 2rem', gap: '1.5rem' }}>
-              <div style={{ position: 'relative' }}>
-                <div style={{ width: 72, height: 72, borderRadius: '50%', border: '1px solid rgba(212,175,55,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'radial-gradient(circle, rgba(212,175,55,0.06), transparent)', animation: 'quizPulse 2s ease-in-out infinite' }}>
-                  <span style={{ fontSize: 28 }}>{config.icon}</span>
-                </div>
-                <div style={{ position: 'absolute', bottom: -4, right: -4 }}>
-                  <Spin size={20} />
-                </div>
-              </div>
-              <div style={{ textAlign: 'center' }}>
-                <p style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 18, color: 'rgba(255,255,255,0.85)', letterSpacing: '0.06em', margin: '0 0 0.375rem' }}>Generating Your Quiz</p>
-                <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.3)', margin: 0 }}>Crafting questions for <span style={{ color: 'rgba(212,175,55,0.7)' }}>{title}</span>…</p>
-              </div>
-              <div style={{ display: 'flex', gap: 6 }}>
-                {[0, 1, 2].map(i => (
-                  <div key={i} style={{ width: 6, height: 6, borderRadius: '50%', background: 'rgba(212,175,55,0.4)', animation: `quizDot 1.2s ease-in-out ${i * 0.2}s infinite` }} />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* ── ERROR ── */}
-          {phase === 'error' && (
-            <>
-              <ModalHeader title={title} type={type} config={config} posterPath={posterPath} onClose={handleClose} />
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '2.5rem 2rem', gap: '1rem', textAlign: 'center' }}>
-                <div style={{ width: 60, height: 60, borderRadius: '50%', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24 }}>⚠️</div>
-                <div>
-                  <p style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 18, color: 'rgba(255,255,255,0.85)', letterSpacing: '0.06em', margin: '0 0 0.5rem' }}>Quiz Generation Failed</p>
-                  <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)', lineHeight: 1.6, maxWidth: 300, margin: 0 }}>{error}</p>
-                </div>
-              </div>
-              <div style={{ padding: '1rem 1.75rem 1.5rem', borderTop: '1px solid rgba(255,255,255,0.04)', flexShrink: 0, display: 'flex', gap: '0.75rem' }}>
-                <button onClick={handleClose} style={styles.secondaryBtn}>Close</button>
-                <button onClick={startQuiz} style={{ ...styles.primaryBtn, flex: 1 }}>Try Again</button>
-              </div>
-            </>
-          )}
-
-          {/* ── QUIZ ── */}
-          {phase === 'quiz' && q && (
-            <>
-              {/* Progress header */}
-              <div style={{ padding: '1.25rem 1.75rem 0', flexShrink: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.875rem' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <span style={{ fontSize: 16 }}>{config.icon}</span>
-                    <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 15, color: 'rgba(255,255,255,0.7)', letterSpacing: '0.08em' }}>{config.label}</span>
-                    {fromCache && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 3, padding: '2px 6px', borderRadius: 20, border: '1px solid rgba(74,222,128,0.2)', background: 'rgba(74,222,128,0.06)' }}>
-                        <span style={{ fontSize: 8 }}>⚡</span>
-                        <span style={{ fontSize: 8, fontWeight: 900, color: 'rgba(74,222,128,0.6)', textTransform: 'uppercase', letterSpacing: '0.12em' }}>Cached</span>
-                      </div>
-                    )}
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.25)', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{current + 1} / {questions.length}</span>
-                    {q.difficulty && (
-                      <span style={{ fontSize: 9, fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.12em', padding: '3px 8px', borderRadius: 20, background: DIFF[q.difficulty]?.bg, border: `1px solid ${DIFF[q.difficulty]?.border}`, color: DIFF[q.difficulty]?.color }}>
-                        {q.difficulty}
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                {/* Segmented progress bar */}
-                <div style={{ position: 'relative', height: 6, background: '#181818', borderRadius: 3, overflow: 'hidden', marginBottom: '1.25rem' }}>
-                  <div style={{ height: '100%', width: `${progressPct}%`, background: 'linear-gradient(90deg, #D4AF37, #F0C93A)', borderRadius: 3, transition: 'width 0.4s ease' }} />
-                  {questions.map((_, i) => i > 0 && (
-                    <div key={i} style={{ position: 'absolute', top: 0, bottom: 0, width: 1, left: `${(i / questions.length) * 100}%`, background: 'rgba(0,0,0,0.6)' }} />
-                  ))}
-                </div>
-              </div>
-
-              {/* Q&A body */}
-              <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '0 1.75rem 0.75rem', scrollbarWidth: 'none' }}>
-                {/* Question */}
-                <p key={current} style={{ fontSize: 15, fontWeight: 600, color: '#fff', lineHeight: 1.55, marginBottom: '1.25rem', animation: 'quizQuestionIn 0.22s ease-out' }}>
-                  {q.q}
-                </p>
-
-                {/* Options */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem' }}>
-                  {q.opts.map((opt, idx) => {
-                    const labels = ['A', 'B', 'C', 'D']
-                    let state = 'idle'
-                    if (confirmed) {
-                      if (idx === q.answer) state = 'correct'
-                      else if (idx === selected) state = 'wrong'
-                    } else if (idx === selected) state = 'selected'
-
-                    const optStyle = {
-                      idle:     { border: '1px solid rgba(255,255,255,0.07)', background: 'rgba(255,255,255,0.02)', color: 'rgba(255,255,255,0.65)', cursor: 'pointer' },
-                      selected: { border: '1px solid rgba(212,175,55,0.6)',  background: 'rgba(212,175,55,0.08)',  color: '#fff', cursor: 'pointer', boxShadow: '0 0 0 1px rgba(212,175,55,0.15)' },
-                      correct:  { border: '1px solid rgba(74,222,128,0.5)',  background: 'rgba(74,222,128,0.08)',  color: '#4ade80' },
-                      wrong:    { border: '1px solid rgba(248,113,113,0.5)', background: 'rgba(248,113,113,0.08)', color: '#f87171' },
-                    }
-                    const labelStyle = {
-                      idle:     { background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.3)' },
-                      selected: { background: 'rgba(212,175,55,0.18)', color: '#D4AF37' },
-                      correct:  { background: 'rgba(74,222,128,0.18)', color: '#4ade80' },
-                      wrong:    { background: 'rgba(248,113,113,0.18)', color: '#f87171' },
-                    }
-
-                    return (
-                      <button
-                        key={idx}
-                        disabled={confirmed}
-                        onClick={() => !confirmed && setSelected(idx)}
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: '0.875rem',
-                          padding: '0.875rem 1rem', borderRadius: 14,
-                          textAlign: 'left', width: '100%', outline: 'none',
-                          transition: 'all 0.18s ease',
-                          animation: `quizOptIn 0.2s ease-out ${idx * 0.06}s both`,
-                          ...optStyle[state],
-                        }}
-                        onMouseEnter={e => { if (state === 'idle') { e.currentTarget.style.borderColor = 'rgba(212,175,55,0.3)'; e.currentTarget.style.background = 'rgba(212,175,55,0.04)' } }}
-                        onMouseLeave={e => { if (state === 'idle') { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.07)'; e.currentTarget.style.background = 'rgba(255,255,255,0.02)' } }}
-                      >
-                        <span style={{ width: 28, height: 28, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 900, flexShrink: 0, transition: 'all 0.18s', ...labelStyle[state] }}>
-                          {confirmed && state === 'correct' ? '✓' : confirmed && state === 'wrong' ? '✗' : labels[idx]}
-                        </span>
-                        <span style={{ fontSize: 13, fontWeight: 500, lineHeight: 1.4, flex: 1 }}>{opt}</span>
-                      </button>
-                    )
-                  })}
-                </div>
-
-                {/* Feedback toast */}
-                {confirmed && (
-                  <div style={{
-                    marginTop: '0.875rem', padding: '0.75rem 1rem', borderRadius: 12,
-                    border: answers[answers.length-1]?.correct ? '1px solid rgba(74,222,128,0.2)' : '1px solid rgba(248,113,113,0.2)',
-                    background: answers[answers.length-1]?.correct ? 'rgba(74,222,128,0.05)' : 'rgba(248,113,113,0.05)',
-                    color: answers[answers.length-1]?.correct ? 'rgba(74,222,128,0.8)' : 'rgba(248,113,113,0.8)',
-                    fontSize: 12, lineHeight: 1.5,
-                    animation: 'quizReveal 0.22s ease-out',
-                  }}>
-                    {answers[answers.length-1]?.correct
-                      ? `✓ Correct! ${current + 1 < questions.length ? 'Keep going.' : 'Last question done!'}`
-                      : `✗ Correct answer: "${q.opts[q.answer]}"`
-                    }
-                  </div>
-                )}
-              </div>
-
-              {/* Footer */}
-              <div style={{ padding: '0.875rem 1.75rem 1.25rem', borderTop: '1px solid rgba(255,255,255,0.04)', flexShrink: 0 }}>
-                {/* Answer dots */}
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, marginBottom: '0.875rem' }}>
-                  {questions.map((_, i) => {
-                    const a = answers[i]
-                    const isCurrent = i === current
-                    const size = isCurrent ? 10 : a ? 10 : 7
-                    return (
-                      <div key={i} style={{
-                        width: size, height: size, borderRadius: '50%',
-                        transition: 'all 0.25s ease',
-                        background: i < answers.length
-                          ? a?.correct ? '#4ade80' : '#f87171'
-                          : isCurrent ? 'rgba(212,175,55,0.4)' : 'rgba(255,255,255,0.1)',
-                        border: isCurrent ? '2px solid #D4AF37' : 'none',
-                        boxShadow: i < answers.length && a?.correct ? '0 0 5px rgba(74,222,128,0.4)' : i < answers.length && !a?.correct ? '0 0 5px rgba(248,113,113,0.35)' : 'none',
-                      }} />
-                    )
-                  })}
-                </div>
-
-                {!confirmed
-                  ? <button onClick={confirmAnswer} disabled={selected === null}
-                      style={{ ...styles.primaryBtn, opacity: selected === null ? 0.35 : 1, cursor: selected === null ? 'not-allowed' : 'pointer', transition: 'all 0.18s ease' }}
-                      onMouseEnter={e => { if (selected !== null) { e.currentTarget.style.background = '#E8C55B'; e.currentTarget.style.transform = 'translateY(-1px)' } }}
-                      onMouseLeave={e => { e.currentTarget.style.background = '#D4AF37'; e.currentTarget.style.transform = 'none' }}>
-                      Confirm Answer
-                    </button>
-                  : <button onClick={advance} disabled={saving}
-                      style={{ ...styles.primaryBtn, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', cursor: saving ? 'wait' : 'pointer' }}
-                      onMouseEnter={e => { if (!saving) { e.currentTarget.style.background = '#E8C55B'; e.currentTarget.style.transform = 'translateY(-1px)' } }}
-                      onMouseLeave={e => { e.currentTarget.style.background = '#D4AF37'; e.currentTarget.style.transform = 'none' }}>
-                      {saving && <Spin size={16} color='#0A0A0A' />}
-                      {saving ? 'Saving…' : current + 1 < questions.length ? 'Next Question →' : 'See Results →'}
-                    </button>
-                }
-                <p style={{ textAlign: 'center', fontSize: 10, color: 'rgba(255,255,255,0.13)', marginTop: '0.5rem' }}>Press 1–4 to select · Enter to confirm</p>
-              </div>
-            </>
-          )}
-
-          {/* ── RESULT ── */}
-          {phase === 'result' && result && (
-            <>
-              <div style={{ padding: '1.5rem 1.75rem 1rem', flexShrink: 0 }}>
-                <p style={{ fontSize: 10, fontWeight: 900, color: 'rgba(255,255,255,0.2)', textTransform: 'uppercase', letterSpacing: '0.2em', margin: '0 0 0.25rem' }}>{config.label} · Results</p>
-                <h3 style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 22, color: '#fff', letterSpacing: '0.04em', margin: 0, lineHeight: 1.2 }}>{title}</h3>
-              </div>
-
-              <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '0 1.75rem 0.75rem', scrollbarWidth: 'none' }}>
-                {/* Score card */}
-                <div style={{
-                  display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '1.5rem',
-                  marginBottom: '1.25rem', borderRadius: 16,
-                  border: result.passed ? '1px solid rgba(212,175,55,0.25)' : '1px solid rgba(248,113,113,0.2)',
-                  background: result.passed ? 'rgba(212,175,55,0.04)' : 'rgba(248,113,113,0.04)',
-                  animation: 'quizReveal 0.3s ease-out',
-                }}>
-                  <ScoreRing pct={result.score} pass={config.pass} size={104} />
-                  <p style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 26, letterSpacing: '0.06em', margin: '0.75rem 0 0.25rem', color: result.passed ? '#D4AF37' : '#f87171' }}>
-                    {result.passed ? 'Passed! 🎉' : 'Not Quite'}
-                  </p>
-                  <p style={{ fontSize: 13, color: result.passed ? 'rgba(255,255,255,0.45)' : 'rgba(255,255,255,0.3)', margin: 0 }}>
-                    {Math.round(result.score * questions.length)} / {questions.length} correct · needed {Math.ceil(config.pass * questions.length)}
-                  </p>
-                </div>
-
-                {/* Question breakdown */}
-                <p style={{ fontSize: 9, fontWeight: 900, color: 'rgba(255,255,255,0.2)', textTransform: 'uppercase', letterSpacing: '0.2em', marginBottom: '0.625rem' }}>Question Breakdown</p>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1rem' }}>
-                  {questions.map((question, i) => {
-                    const a = answers[i]
-                    if (!a) return null
-                    return (
-                      <div key={i} style={{
-                        display: 'flex', alignItems: 'flex-start', gap: '0.75rem',
-                        padding: '0.75rem', borderRadius: 12,
-                        border: a.correct ? '1px solid rgba(74,222,128,0.15)' : '1px solid rgba(248,113,113,0.15)',
-                        background: a.correct ? 'rgba(74,222,128,0.04)' : 'rgba(248,113,113,0.04)',
-                        animation: `quizOptIn 0.2s ease-out ${i * 0.04}s both`,
-                      }}>
-                        <span style={{ width: 20, height: 20, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 900, flexShrink: 0, marginTop: 1, background: a.correct ? 'rgba(74,222,128,0.15)' : 'rgba(248,113,113,0.15)', color: a.correct ? '#4ade80' : '#f87171' }}>
-                          {a.correct ? '✓' : '✗'}
-                        </span>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.55)', lineHeight: 1.4, margin: 0, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{question.q}</p>
-                          {!a.correct && (
-                            <p style={{ fontSize: 10, color: 'rgba(74,222,128,0.6)', margin: '0.25rem 0 0' }}>✓ {question.opts[question.answer]}</p>
-                          )}
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-
-                {/* Cooldown notice */}
-                {!result.passed && result.nextAllowed && (
-                  <div style={{ padding: '1rem', borderRadius: 12, border: '1px solid rgba(248,113,113,0.2)', background: 'rgba(248,113,113,0.04)', marginBottom: '0.75rem' }}>
-                    <p style={{ fontSize: 12, color: 'rgba(248,113,113,0.7)', lineHeight: 1.6, margin: 0 }}>
-                      ⏳ You can retake this quiz in <strong style={{ color: '#f87171' }}>{config.cooldownDays} day{config.cooldownDays !== 1 ? 's' : ''}</strong>. Use the time to rewatch and refresh your memory.
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              <div style={{ padding: '1rem 1.75rem 1.5rem', borderTop: '1px solid rgba(255,255,255,0.04)', flexShrink: 0 }}>
-                <button onClick={handleClose}
-                  style={result.passed ? { ...styles.primaryBtn } : { ...styles.secondaryBtn }}
-                  onMouseEnter={e => { if (result.passed) { e.currentTarget.style.background = '#E8C55B'; e.currentTarget.style.transform = 'translateY(-1px)' } }}
-                  onMouseLeave={e => { if (result.passed) { e.currentTarget.style.background = '#D4AF37'; e.currentTarget.style.transform = 'none' } }}>
-                  {result.passed ? '✓ Done' : 'Close'}
-                </button>
-              </div>
-            </>
-          )}
+          <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.3)', lineHeight: 1.6, margin: 0 }}>
+            Questions are AI-generated based on the content. Show what you know to log this as watched!
+          </p>
         </div>
       </div>
 
-      <style>{`
-        @keyframes quizFadeIn    { from { opacity: 0 } to { opacity: 1 } }
-        @keyframes quizFadeOut   { from { opacity: 1 } to { opacity: 0 } }
-        @keyframes quizModalIn   { from { opacity: 0; transform: scale(0.92) translateY(16px) } to { opacity: 1; transform: scale(1) translateY(0) } }
-        @keyframes quizModalOut  { from { opacity: 1; transform: scale(1) translateY(0) } to { opacity: 0; transform: scale(0.95) translateY(8px) } }
-        @keyframes quizPulse     { 0%,100% { opacity: 0.6; transform: scale(1) } 50% { opacity: 1; transform: scale(1.04) } }
-        @keyframes quizDot       { 0%,80%,100% { transform: scale(0.8); opacity: 0.35 } 40% { transform: scale(1.3); opacity: 1 } }
-        @keyframes quizOptIn     { from { opacity: 0; transform: translateX(-6px) } to { opacity: 1; transform: translateX(0) } }
-        @keyframes quizQuestionIn{ from { opacity: 0; transform: translateY(-5px) } to { opacity: 1; transform: translateY(0) } }
-        @keyframes quizReveal    { from { opacity: 0; transform: translateY(5px) } to { opacity: 1; transform: translateY(0) } }
-        @keyframes quizSpin      { to { transform: rotate(360deg) } }
-      `}</style>
-    </>
+      {/* CTA */}
+      <div style={{ padding: '0 24px 24px', display: 'flex', gap: '10px' }}>
+        <button onClick={onStart} style={{
+          flex: 1, padding: '14px 24px', borderRadius: '14px',
+          background: `linear-gradient(135deg, ${cfg.color}, ${cfg.color}CC)`,
+          border: 'none', color: '#0A0A0A', fontSize: '15px', fontWeight: 900,
+          fontFamily: "'Bebas Neue', sans-serif", letterSpacing: '0.12em',
+          cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+          boxShadow: `0 8px 24px ${cfg.color}30`, transition: 'all 0.2s',
+        }}
+          onMouseEnter={e => { e.target.style.transform = 'scale(1.02)'; e.target.style.boxShadow = `0 12px 32px ${cfg.color}50` }}
+          onMouseLeave={e => { e.target.style.transform = 'scale(1)'; e.target.style.boxShadow = `0 8px 24px ${cfg.color}30` }}
+        >
+          <span>✨</span> START QUIZ
+        </button>
+        <button onClick={onClose} style={{
+          padding: '14px 20px', borderRadius: '14px',
+          background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
+          color: 'rgba(255,255,255,0.35)', fontSize: '13px', fontWeight: 700,
+          cursor: 'pointer', transition: 'all 0.2s',
+        }}>Cancel</button>
+      </div>
+    </div>
   )
 }
 
-/* ─── Modal header sub-component ── */
-const ModalHeader = ({ title, type, config, posterPath, onClose }) => {
-  const tmdbImg = (p) => p ? `https://image.tmdb.org/t/p/w342${p}` : null
+/* ─── LOADING SCREEN ─────────────────────────────────── */
+const LoadingScreen = ({ cfg, title }) => (
+  <div style={{ padding: '60px 24px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px' }}>
+    <div style={{
+      width: '72px', height: '72px', borderRadius: '20px',
+      background: `${cfg.color}12`, border: `1px solid ${cfg.color}25`,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      animation: 'qPulse 1.5s ease-in-out infinite',
+    }}>
+      <span style={{ fontSize: '28px' }}>{cfg.emoji}</span>
+    </div>
+    <Spin size={28} color={cfg.color} />
+    <div style={{ textAlign: 'center' }}>
+      <p style={{ color: 'rgba(255,255,255,0.7)', fontSize: '15px', fontWeight: 700, margin: '0 0 6px' }}>Generating your quiz…</p>
+      <p style={{ color: 'rgba(255,255,255,0.25)', fontSize: '12px', margin: 0 }}>AI is crafting questions about {title}</p>
+    </div>
+  </div>
+)
+
+/* ─── ACTIVE SCREEN ──────────────────────────────────── */
+const ActiveScreen = ({
+  q, current, total, selected, revealed,
+  score, passCount, timeLeft, timerPct, timerColor,
+  cfg, answers, onAnswer, onNext, onEndQuiz, isLastQuestion
+}) => {
+  const optLabels = ['A', 'B', 'C', 'D']
+
+  const getOptionStyle = (idx) => {
+    const base = {
+      width: '100%', padding: '13px 16px', borderRadius: '12px',
+      border: '1px solid', display: 'flex', alignItems: 'center', gap: '12px',
+      cursor: revealed ? 'default' : 'pointer', textAlign: 'left',
+      transition: 'all 0.25s', background: 'none',
+      animation: `qFadeUp 0.2s ease-out ${idx * 0.06}s both`,
+    }
+    if (!revealed) return {
+      ...base,
+      borderColor: 'rgba(255,255,255,0.08)',
+      color: 'rgba(255,255,255,0.7)',
+      background: selected === idx ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.02)',
+    }
+    if (idx === q.answer) return {
+      ...base,
+      borderColor: '#34D399',
+      background: 'rgba(52,211,153,0.08)',
+      color: '#34D399',
+    }
+    if (idx === selected && idx !== q.answer) return {
+      ...base,
+      borderColor: '#EF4444',
+      background: 'rgba(239,68,68,0.08)',
+      color: '#EF4444',
+      animation: `qShake 0.3s ease-out`,
+    }
+    return { ...base, borderColor: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.25)' }
+  }
+
   return (
-    <div style={{ padding: '1rem 1.25rem 1rem 1.5rem', borderBottom: '1px solid rgba(255,255,255,0.04)', display: 'flex', alignItems: 'center', gap: '0.875rem', flexShrink: 0 }}>
-      {posterPath && <img src={tmdbImg(posterPath)} alt={title} style={{ width: 36, height: 52, objectFit: 'cover', borderRadius: 6, flexShrink: 0, boxShadow: '0 4px 12px rgba(0,0,0,0.4)' }} />}
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', marginBottom: 2 }}>
-          <span style={{ fontSize: 13 }}>{config.icon}</span>
-          <span style={{ fontSize: 10, fontWeight: 900, color: 'rgba(212,175,55,0.5)', textTransform: 'uppercase', letterSpacing: '0.18em' }}>{config.label}</span>
+    <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', maxHeight: '85vh' }}>
+      {/* Top bar */}
+      <div style={{ padding: '16px 20px', borderBottom: '1px solid rgba(255,255,255,0.04)', display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
+        {/* Progress dots */}
+        <div style={{ display: 'flex', gap: '4px', flex: 1 }}>
+          {Array.from({ length: total }).map((_, i) => (
+            <div key={i} style={{
+              flex: 1, height: '4px', borderRadius: '2px',
+              background: i < current
+                ? answers[i]?.correct ? '#34D399' : '#EF4444'
+                : i === current ? cfg.color : 'rgba(255,255,255,0.08)',
+              transition: 'all 0.3s',
+            }} />
+          ))}
         </div>
-        <h3 style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 16, color: '#fff', letterSpacing: '0.04em', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</h3>
+        {/* Q counter */}
+        <span style={{ fontSize: '11px', fontWeight: 800, color: 'rgba(255,255,255,0.3)', flexShrink: 0 }}>
+          {current + 1}/{total}
+        </span>
+        {/* Score */}
+        <div style={{
+          padding: '3px 10px', borderRadius: '20px',
+          background: `${cfg.color}15`, border: `1px solid ${cfg.color}25`,
+          fontSize: '11px', fontWeight: 800, color: cfg.color, flexShrink: 0
+        }}>
+          {score}/{passCount} needed
+        </div>
       </div>
-      <button onClick={onClose}
-        style={{ width: 32, height: 32, borderRadius: 10, border: 'none', background: 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'rgba(255,255,255,0.2)', transition: 'all 0.18s ease', flexShrink: 0 }}
-        onMouseEnter={e => { e.currentTarget.style.color = '#fff'; e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; e.currentTarget.style.transform = 'rotate(90deg)' }}
-        onMouseLeave={e => { e.currentTarget.style.color = 'rgba(255,255,255,0.2)'; e.currentTarget.style.background = 'transparent'; e.currentTarget.style.transform = 'none' }}>
-        <svg width={14} height={14} fill='none' stroke='currentColor' viewBox='0 0 24 24'>
-          <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M6 18L18 6M6 6l12 12' />
-        </svg>
-      </button>
+
+      {/* Timer bar */}
+      <div style={{ height: '3px', background: 'rgba(255,255,255,0.04)', flexShrink: 0 }}>
+        <div style={{
+          height: '100%', background: timerColor,
+          width: `${timerPct}%`, transition: 'width 1s linear, background 0.3s',
+          boxShadow: `0 0 8px ${timerColor}80`,
+        }} />
+      </div>
+
+      {/* Timer counter */}
+      <div style={{ padding: '10px 20px 0', display: 'flex', justifyContent: 'flex-end', flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+          <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.2)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Time</span>
+          <span style={{ fontSize: '14px', fontWeight: 900, color: timerColor, fontVariantNumeric: 'tabular-nums', fontFamily: 'monospace', transition: 'color 0.3s' }}>
+            {String(timeLeft).padStart(2, '0')}s
+          </span>
+        </div>
+      </div>
+
+      {/* Question */}
+      <div style={{ padding: '16px 20px 12px', flexShrink: 0 }}>
+        <p style={{
+          fontSize: '16px', fontWeight: 700, color: 'rgba(255,255,255,0.92)',
+          lineHeight: 1.5, margin: 0,
+          animation: 'qFadeUp 0.25s ease-out',
+        }}>{q.q}</p>
+      </div>
+
+      {/* Options */}
+      <div style={{ padding: '0 20px 16px', display: 'flex', flexDirection: 'column', gap: '8px', overflow: 'auto', flexShrink: 0 }}>
+        {q.options.map((opt, idx) => (
+          <button key={idx} onClick={() => !revealed && onAnswer(idx)} style={getOptionStyle(idx)}>
+            <div style={{
+              width: '28px', height: '28px', borderRadius: '8px', flexShrink: 0,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: '11px', fontWeight: 900,
+              background: !revealed
+                ? 'rgba(255,255,255,0.06)'
+                : idx === q.answer
+                  ? 'rgba(52,211,153,0.2)'
+                  : idx === selected
+                    ? 'rgba(239,68,68,0.2)'
+                    : 'rgba(255,255,255,0.04)',
+              color: !revealed
+                ? 'rgba(255,255,255,0.4)'
+                : idx === q.answer
+                  ? '#34D399'
+                  : idx === selected
+                    ? '#EF4444'
+                    : 'rgba(255,255,255,0.2)',
+            }}>
+              {revealed && idx === q.answer ? '✓' : revealed && idx === selected && idx !== q.answer ? '✗' : optLabels[idx]}
+            </div>
+            <span style={{ fontSize: '13px', fontWeight: 600, lineHeight: 1.4 }}>{opt}</span>
+            {/* Keyboard hint */}
+            {!revealed && (
+              <span style={{ marginLeft: 'auto', fontSize: '10px', color: 'rgba(255,255,255,0.15)', flexShrink: 0 }}>{idx + 1}</span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {/* Feedback + Next */}
+      {revealed && (
+        <div style={{ padding: '0 20px 20px', flexShrink: 0, animation: 'qFadeUp 0.2s ease-out' }}>
+          <div style={{
+            padding: '12px 16px', borderRadius: '12px', marginBottom: '12px',
+            background: selected === q.answer ? 'rgba(52,211,153,0.08)' : 'rgba(239,68,68,0.08)',
+            border: `1px solid ${selected === q.answer ? 'rgba(52,211,153,0.2)' : 'rgba(239,68,68,0.2)'}`,
+          }}>
+            <p style={{ margin: 0, fontSize: '13px', fontWeight: 700, color: selected === q.answer ? '#34D399' : '#FCA5A5' }}>
+              {selected === q.answer ? '✓ Correct!' : selected === -1 ? '⏰ Time\'s up!' : `✗ Incorrect — correct answer was: ${q.options[q.answer]}`}
+            </p>
+          </div>
+          <button onClick={isLastQuestion ? onEndQuiz : onNext} style={{
+            width: '100%', padding: '13px', borderRadius: '12px',
+            background: cfg.color, border: 'none', color: '#0A0A0A',
+            fontSize: '14px', fontWeight: 900, fontFamily: "'Bebas Neue', sans-serif",
+            letterSpacing: '0.1em', cursor: 'pointer', transition: 'all 0.2s',
+            boxShadow: `0 4px 16px ${cfg.color}30`,
+          }}>
+            {isLastQuestion ? 'SEE RESULTS →' : 'NEXT QUESTION →'}
+          </button>
+          <p style={{ textAlign: 'center', fontSize: '10px', color: 'rgba(255,255,255,0.2)', margin: '8px 0 0' }}>Press Enter to continue</p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ─── RESULT SCREEN ──────────────────────────────────── */
+const ResultScreen = ({ passed, score, total, scorePct, passCount, cfg, title, onPass, onRetry, onClose, onFail, answers, questions }) => {
+  useEffect(() => {
+    if (!passed && onFail) onFail(scorePct)
+  }, []) // eslint-disable-line
+
+  return (
+    <div style={{ overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
+      {/* Result header */}
+      <div style={{ padding: '32px 24px 24px', textAlign: 'center', flexShrink: 0 }}>
+        {/* Score ring */}
+        <div style={{ position: 'relative', display: 'inline-block', marginBottom: '20px' }}>
+          <ProgressRing pct={scorePct} size={100} stroke={7} color={passed ? '#34D399' : '#EF4444'}>
+            <text x='50' y='54' textAnchor='middle' style={{ fontSize: '22px', fontWeight: 900, fill: passed ? '#34D399' : '#EF4444', fontFamily: 'system-ui' }}>
+              {scorePct}%
+            </text>
+          </ProgressRing>
+          <div style={{
+            position: 'absolute', bottom: '-8px', right: '-8px',
+            width: '36px', height: '36px', borderRadius: '50%',
+            background: passed ? '#34D399' : '#EF4444',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: '16px', boxShadow: `0 4px 16px ${passed ? 'rgba(52,211,153,0.4)' : 'rgba(239,68,68,0.4)'}`,
+            animation: 'qBounce 0.5s ease-out 0.2s both',
+          }}>
+            {passed ? '✓' : '✗'}
+          </div>
+        </div>
+
+        <h2 style={{
+          fontFamily: "'Bebas Neue', sans-serif",
+          fontSize: '28px', letterSpacing: '0.08em',
+          color: passed ? '#34D399' : '#FCA5A5',
+          margin: '0 0 8px',
+        }}>
+          {passed ? 'QUIZ PASSED! 🎉' : 'QUIZ FAILED'}
+        </h2>
+        <p style={{ color: 'rgba(255,255,255,0.45)', fontSize: '13px', margin: 0 }}>
+          {passed
+            ? `You got ${score}/${total} — "${title}" logged as watched!`
+            : `You got ${score}/${total} — needed ${passCount}. Try again to verify your watch.`
+          }
+        </p>
+      </div>
+
+      {/* Answer review */}
+      <div style={{ padding: '0 20px 20px', maxHeight: '220px', overflow: 'auto', flexShrink: 0 }}>
+        <p style={{ fontSize: '10px', fontWeight: 800, color: 'rgba(255,255,255,0.2)', textTransform: 'uppercase', letterSpacing: '0.15em', marginBottom: '8px' }}>Question Review</p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          {questions.map((q, i) => {
+            const ans = answers[i]
+            const correct = ans?.correct
+            return (
+              <div key={i} style={{
+                padding: '8px 12px', borderRadius: '10px',
+                background: correct ? 'rgba(52,211,153,0.06)' : 'rgba(239,68,68,0.06)',
+                border: `1px solid ${correct ? 'rgba(52,211,153,0.15)' : 'rgba(239,68,68,0.15)'}`,
+                display: 'flex', alignItems: 'flex-start', gap: '10px',
+              }}>
+                <span style={{ fontSize: '12px', flexShrink: 0, marginTop: '1px' }}>{correct ? '✅' : '❌'}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ margin: 0, fontSize: '11px', color: 'rgba(255,255,255,0.6)', lineHeight: 1.4, marginBottom: correct ? 0 : '3px' }}>{q.q}</p>
+                  {!correct && <p style={{ margin: 0, fontSize: '10px', color: '#34D399', opacity: 0.8 }}>✓ {q.options[q.answer]}</p>}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div style={{ padding: '0 20px 24px', display: 'flex', gap: '10px', flexShrink: 0 }}>
+        {passed ? (
+          <button onClick={onPass} style={{
+            flex: 1, padding: '14px', borderRadius: '14px',
+            background: 'linear-gradient(135deg, #34D399, #10B981)',
+            border: 'none', color: '#0A0A0A', fontSize: '15px', fontWeight: 900,
+            fontFamily: "'Bebas Neue', sans-serif", letterSpacing: '0.12em',
+            cursor: 'pointer', boxShadow: '0 8px 24px rgba(52,211,153,0.3)',
+            transition: 'all 0.2s',
+          }}>✓ MARK AS WATCHED</button>
+        ) : (
+          <>
+            <button onClick={onRetry} style={{
+              flex: 1, padding: '14px', borderRadius: '14px',
+              background: `linear-gradient(135deg, ${cfg.color}, ${cfg.color}CC)`,
+              border: 'none', color: '#0A0A0A', fontSize: '15px', fontWeight: 900,
+              fontFamily: "'Bebas Neue', sans-serif", letterSpacing: '0.12em',
+              cursor: 'pointer', boxShadow: `0 8px 24px ${cfg.color}30`,
+              transition: 'all 0.2s',
+            }}>↺ TRY AGAIN</button>
+            <button onClick={onClose} style={{
+              padding: '14px 20px', borderRadius: '14px',
+              background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
+              color: 'rgba(255,255,255,0.35)', fontSize: '13px', fontWeight: 700,
+              cursor: 'pointer', transition: 'all 0.2s',
+            }}>Close</button>
+          </>
+        )}
+      </div>
     </div>
   )
 }
