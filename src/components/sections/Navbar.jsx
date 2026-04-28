@@ -1100,7 +1100,7 @@ const SettingsPanel = ({ currentUser }) => {
         </div>
         <div className='flex-1 overflow-y-auto px-6 py-5' style={{ scrollbarWidth: 'thin', scrollbarColor: '#222 transparent' }}>
           {section === 'account' && <div className='max-w-lg'><SectionTitle>Account Details</SectionTitle><Field label='Display Name' value={form.displayName} onChange={v => setForm(p => ({ ...p, displayName: v }))} /><Field label='Bio' value={form.bio} onChange={v => setForm(p => ({ ...p, bio: v }))} rows={3} hint='Shown on your public profile' /><Field label='Username' value={form.username} disabled onChange={() => {}} hint='Cannot be changed' /><Field label='Email' value={form.email} disabled onChange={() => {}} hint='Manage email via account portal' /></div>}
-          {section === 'appearance' && <div className='max-w-lg'><SectionTitle>Appearance</SectionTitle><div className='mb-5'><p className='text-[10px] font-black text-white/25 uppercase tracking-[0.18em] mb-2.5'>Theme</p><div className='flex gap-2'>{[{id:'dark',label:'Dark',bg:'#0A0A0A',border:'#222'},{id:'cinema',label:'Cinema',bg:'#0D0A00',border:'#3D2B00'},{id:'midnight',label:'Midnight',bg:'#06080F',border:'#0D1424'}].map(t => <button key={t.id} onClick={() => updateSetting('theme', t.id)} style={{ touchAction: 'manipulation' }} className={`flex-1 p-3 rounded-2xl border text-center transition-all duration-200 ${settings.theme === t.id ? 'border-[#D4AF37]/50 shadow-[0_0_12px_rgba(212,175,55,0.15)]' : 'border-white/[0.06] hover:border-white/[0.12]'}`} style={{ background: t.bg }}><div className='w-8 h-8 rounded-xl mx-auto mb-2 border' style={{ background: t.bg, borderColor: t.border }} /><p className={`text-[11px] font-bold ${settings.theme === t.id ? 'text-[#D4AF37]' : 'text-white/40'}`}>{t.label}</p>{settings.theme === t.id && <div className='w-1.5 h-1.5 rounded-full bg-[#D4AF37] mx-auto mt-1.5' />}</button>)}</div></div><Toggle settingKey='compactFeed' label='Compact Feed' desc='Tighter spacing — see more posts at once' /><Toggle settingKey='showBackdrops' label='Movie Backdrops' desc='Cinematic backdrops on review posts' /><Toggle settingKey='animations' label='Animations' desc='UI transitions and micro-interactions' /><Toggle settingKey='reduceMotion' label='Reduce Motion' desc='Minimize motion for accessibility' /></div>}
+          {section === 'appearance' && <div className='max-w-lg'><SectionTitle>Appearance</SectionTitle><div className='mb-5'><p className='text-[10px] font-black text-white/25 uppercase tracking-[0.18em] mb-2.5'>Theme</p><div className='flex gap-2'>{[{id:'dark',label:'Dark',bg:'#0A0A0A',border:'#222'},{id:'cinema',label:'Cinema',bg:'#0D0A00',border:'#3D2B00'},{id:'midnight',label:'Midnight',bg:'#06080F',border:'#0D1424'}].map(t => <button key={t.id} onClick={() => updateSetting('theme', t.id)} style={{ touchAction: 'manipulation', background: t.bg }} className={`flex-1 p-3 rounded-2xl border text-center transition-all duration-200 ${settings.theme === t.id ? 'border-[#D4AF37]/50 shadow-[0_0_12px_rgba(212,175,55,0.15)]' : 'border-white/[0.06] hover:border-white/[0.12]'}`}><div className='w-8 h-8 rounded-xl mx-auto mb-2 border' style={{ background: t.bg, borderColor: t.border }} /><p className={`text-[11px] font-bold ${settings.theme === t.id ? 'text-[#D4AF37]' : 'text-white/40'}`}>{t.label}</p>{settings.theme === t.id && <div className='w-1.5 h-1.5 rounded-full bg-[#D4AF37] mx-auto mt-1.5' />}</button>)}</div></div><Toggle settingKey='compactFeed' label='Compact Feed' desc='Tighter spacing — see more posts at once' /><Toggle settingKey='showBackdrops' label='Movie Backdrops' desc='Cinematic backdrops on review posts' /><Toggle settingKey='animations' label='Animations' desc='UI transitions and micro-interactions' /><Toggle settingKey='reduceMotion' label='Reduce Motion' desc='Minimize motion for accessibility' /></div>}
           {section === 'notifications' && <div className='max-w-lg'><SectionTitle>Notifications</SectionTitle><Toggle settingKey='reviewLikes' label='Review Interactions' desc='Likes, comments, and reposts on your reviews' /><Toggle settingKey='listCollabs' label='List Collaboration' desc='When someone adds to your shared list' /><Toggle settingKey='newFollowers' label='New Followers' desc='When someone follows your profile' /><Toggle settingKey='pointsEarned' label='Points & Levels' desc='XP earned and level-up alerts' /><Toggle settingKey='weeklyDigest' label='Weekly Digest' desc='Your watch activity summary every Monday' /></div>}
           {section === 'privacy' && <div className='max-w-lg'><SectionTitle>Privacy</SectionTitle><Toggle settingKey='publicProfile' label='Public Profile' desc='Anyone can view your reviews and lists' /><Toggle settingKey='showLists' label='Visible Watchlists' desc='Lists appear on your public profile' /><Toggle settingKey='showActivity' label='Activity Feed' desc="Appear in others' activity feeds" /><Toggle settingKey='allowDMs' label='Direct Messages' desc='Allow other users to message you' /></div>}
           {section === 'playback' && <div className='max-w-lg'><SectionTitle>Playback & Display</SectionTitle><Toggle settingKey='autoplay' label='Autoplay Trailers' desc='Trailers play automatically on hover' /><div className='mb-4'><p className='text-[10px] font-black text-white/25 uppercase tracking-[0.18em] mb-2.5'>Language</p><select value={settings.language} onChange={e => updateSetting('language', e.target.value)} className='w-full bg-[#0E0E0E] border border-white/[0.07] rounded-xl px-4 py-3 text-[13px] text-white outline-none focus:border-[#D4AF37]/40 transition-all cursor-pointer'><option value='en'>English</option><option value='es'>Spanish</option><option value='fr'>French</option><option value='de'>German</option><option value='ja'>Japanese</option><option value='ko'>Korean</option><option value='pt'>Portuguese</option></select></div></div>}
@@ -1139,27 +1139,29 @@ const SlidePanel = ({ panelId, currentUser, onClose }) => {
     <>
       <div className='fixed inset-0 z-40' onClick={onClose}
         style={{ background: 'rgba(0,0,0,0.62)', backdropFilter: 'blur(5px)', WebkitBackdropFilter: 'blur(5px)', animation: 'navScrimIn .2s ease-out' }} />
-      <div className='fixed z-50 flex flex-col' style={{
+      <div className='fixed z-50 flex flex-col overflow-hidden' style={{
         top: '50%', left: '50%', transform: 'translateX(-50%) translateY(-50%)',
         width: meta.wide ? 'min(860px, 96vw)' : 'min(600px, 96vw)',
         height: 'min(92vh, 780px)',
-        background: 'linear-gradient(160deg, #0E0E0E 0%, #080808 100%)',
-        border: '1px solid rgba(255,255,255,0.07)', borderRadius: '24px',
-        boxShadow: '0 32px 120px rgba(0,0,0,.95), 0 0 0 1px rgba(212,175,55,0.06)',
+        background: 'linear-gradient(160deg, #111111 0%, #0A0A0A 50%, #070707 100%)',
+        border: '1px solid rgba(255,255,255,0.08)', borderRadius: '24px',
+        boxShadow: '0 40px 140px rgba(0,0,0,.98), 0 0 0 1px rgba(212,175,55,0.08), inset 0 1px 0 rgba(255,255,255,0.04)',
         animation: 'navPanelIn .3s cubic-bezier(0.22, 1, 0.36, 1)',
       }}>
-        <div className='h-[2px] flex-shrink-0 rounded-t-3xl overflow-hidden'>
-          <div className='h-full' style={{ background: 'linear-gradient(90deg, transparent 0%, #D4AF37 30%, #F0C93A 50%, #D4AF37 70%, transparent 100%)' }} />
-        </div>
-        <div className='flex items-center justify-between px-4 sm:px-6 py-4 border-b border-white/[0.04] flex-shrink-0'>
+        {/* Radial glow at top */}
+        <div className='absolute inset-x-0 top-0 h-36 pointer-events-none' style={{ background: 'radial-gradient(ellipse 70% 50% at 50% -10%, rgba(212,175,55,0.06), transparent)' }} />
+
+        <div className='h-[3px] flex-shrink-0' style={{ background: 'linear-gradient(90deg, transparent 0%, #D4AF37 20%, #F5D060 50%, #D4AF37 80%, transparent 100%)', boxShadow: '0 0 20px rgba(212,175,55,0.35)' }} />
+
+        <div className='flex items-center justify-between px-4 sm:px-6 py-4 border-b border-white/[0.04] flex-shrink-0 relative'>
           <div className='flex items-center gap-3'>
-            <div className='w-7 h-7 rounded-lg bg-[#D4AF37]/10 flex items-center justify-center'>
+            <div className='w-8 h-8 rounded-xl flex items-center justify-center' style={{ background: 'linear-gradient(135deg, rgba(212,175,55,0.18), rgba(212,175,55,0.06))', border: '1px solid rgba(212,175,55,0.2)' }}>
               <svg className='w-4 h-4 text-[#D4AF37]' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={1.8} d={meta.icon} /></svg>
             </div>
-            <h2 className='font-bebas text-[18px] tracking-[0.12em] text-white/90'>{meta.title}</h2>
+            <h2 className='font-bebas text-[19px] tracking-[0.12em] text-white/95'>{meta.title}</h2>
           </div>
           <button onClick={onClose} style={{ touchAction: 'manipulation' }}
-            className='w-8 h-8 flex items-center justify-center rounded-lg text-white/20 hover:text-white hover:bg-white/[0.06] transition-all duration-200 hover:rotate-90'>
+            className='w-8 h-8 flex items-center justify-center rounded-xl text-white/25 hover:text-white/80 hover:bg-white/[0.07] border border-transparent hover:border-white/[0.08] transition-all duration-200 hover:rotate-90'>
             <svg className='w-4 h-4' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M6 18L18 6M6 6l12 12' /></svg>
           </button>
         </div>
@@ -1203,8 +1205,8 @@ const NAV_ITEMS = [
 const MobileBottomBar = ({ activePanel, setActivePanel, activeRoute, navigate, notifCounts }) => {
   const mobileItems = NAV_ITEMS.filter(n => n.id !== 'settings')
   return (
-    <div className='fixed bottom-0 left-0 right-0 z-50 lg:hidden' style={{ background: 'rgba(7,7,7,0.97)', borderTop: '1px solid rgba(212,175,55,0.12)', paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 6px)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' }}>
-      <div className='h-[1px] w-full' style={{ background: 'linear-gradient(90deg, transparent 0%, #D4AF37 30%, #F0C93A 50%, #D4AF37 70%, transparent 100%)' }} />
+    <div className='fixed bottom-0 left-0 right-0 z-50 lg:hidden' style={{ background: 'rgba(6,6,6,0.97)', borderTop: '1px solid rgba(212,175,55,0.10)', paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 6px)', backdropFilter: 'blur(24px)', WebkitBackdropFilter: 'blur(24px)' }}>
+      <div className='h-[1px] w-full' style={{ background: 'linear-gradient(90deg, transparent 0%, #D4AF37 30%, #F5D060 50%, #D4AF37 70%, transparent 100%)', boxShadow: '0 0 12px rgba(212,175,55,0.2)' }} />
       <div className='flex items-center justify-around px-1 pt-1.5 pb-1'>
         {mobileItems.map(item => {
           const isRoute   = activeRoute === item.id
@@ -1214,9 +1216,9 @@ const MobileBottomBar = ({ activePanel, setActivePanel, activeRoute, navigate, n
           return (
             <button key={item.id}
               onClick={() => { if (item.panel) setActivePanel(p => p === item.panel ? null : item.panel); else { setActivePanel(null); navigate(item.path) } }}
-              style={{ touchAction: 'manipulation', minWidth: '56px', minHeight: '44px', background: isActive ? 'rgba(212,175,55,0.1)' : 'transparent' }}
+              style={{ touchAction: 'manipulation', minWidth: '56px', minHeight: '44px', background: isActive ? 'rgba(212,175,55,0.08)' : 'transparent' }}
               className='flex flex-col items-center justify-center gap-1 px-2 py-2 rounded-2xl transition-all duration-200 relative'>
-              {isActive && <div className='absolute -top-[1px] left-1/2 -translate-x-1/2 w-4 h-[3px] rounded-full bg-[#D4AF37]' style={{ animation: 'navFadeIn .2s ease-out' }} />}
+              {isActive && <div className='absolute -top-px left-1/2 -translate-x-1/2 w-6 h-[2px] rounded-full bg-[#D4AF37]' style={{ animation: 'navFadeIn .2s ease-out', boxShadow: '0 0 10px rgba(212,175,55,0.7)' }} />}
               <div className='relative'>
                 <svg className={`w-[22px] h-[22px] transition-all duration-200 ${isActive ? 'text-[#D4AF37] scale-110' : 'text-white/40'}`} fill='none' stroke='currentColor' viewBox='0 0 24 24'>
                   <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={isActive ? 2.5 : 1.8} d={item.icon} />
@@ -1295,24 +1297,28 @@ const Navbar = ({ currentUser: propUser }) => {
       <div
         onMouseEnter={() => isDesktop && setExpanded(true)}
         onMouseLeave={() => { isDesktop && setExpanded(false); setNavItemHover(null) }}
-        className={`hidden lg:flex fixed left-4 top-1/2 -translate-y-1/2 h-[90vh] max-h-[800px] rounded-3xl z-50 flex-col transition-all duration-300 ease-in-out ${expanded ? 'w-72' : 'w-20'} bg-flikd-gold border-2 border-flikd-gold shadow-[0_20px_80px_rgba(212,175,55,0.22)]`}>
+        className={`hidden lg:flex fixed left-4 top-1/2 -translate-y-1/2 h-[90vh] max-h-[800px] rounded-3xl z-50 flex-col transition-all duration-300 ease-in-out ${expanded ? 'w-72' : 'w-20'} bg-flikd-gold ring-1 ring-white/[0.18] shadow-[0_24px_80px_rgba(212,175,55,0.30),_0_8px_32px_rgba(0,0,0,0.60)]`}>
         <div className='absolute inset-0 rounded-3xl pointer-events-none overflow-hidden'>
-          <div className='absolute inset-0' style={{ background: 'linear-gradient(155deg, rgba(255,255,255,0.13) 0%, transparent 50%, rgba(0,0,0,0.06) 100%)' }} />
+          <div className='absolute inset-0' style={{ background: 'linear-gradient(155deg, rgba(255,255,255,0.22) 0%, rgba(255,255,255,0.06) 35%, transparent 55%, rgba(0,0,0,0.10) 100%)' }} />
+          <div className='absolute inset-0 rounded-3xl' style={{ boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.25), inset 0 -1px 0 rgba(0,0,0,0.12)' }} />
         </div>
 
         {/* Logo */}
         <div className='relative flex items-center gap-3 p-5 border-b border-black/10 overflow-hidden'>
-          <button onClick={() => { setActivePanel(null); navigate('/home') }} style={{ touchAction: 'manipulation' }}
-            className='w-12 h-12 bg-black/20 rounded-2xl flex items-center justify-center flex-shrink-0 shadow-lg hover:scale-110 hover:bg-black/30 active:scale-95 transition-all duration-200 backdrop-blur-sm'>
+          <button onClick={() => { setActivePanel(null); navigate('/home') }}
+            style={{ touchAction: 'manipulation', background: 'rgba(0,0,0,0.22)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)' }}
+            className='w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0 shadow-[0_4px_16px_rgba(0,0,0,0.35)] hover:scale-110 active:scale-95 transition-all duration-200'>
             <img src={logo} alt="Flik'd" className='w-9 h-9 object-contain drop-shadow-xl' />
           </button>
-          <span className={`font-bebas text-2xl tracking-[0.15em] text-black/85 font-bold whitespace-nowrap transition-all duration-300 ${expanded ? 'opacity-100 translate-x-0' : 'opacity-0 -translate-x-3 pointer-events-none'}`}>FLIK'D</span>
+          <div className={`transition-all duration-300 ${expanded ? 'opacity-100 translate-x-0' : 'opacity-0 -translate-x-3 pointer-events-none'}`}>
+            <span className='font-bebas text-2xl tracking-[0.15em] text-black/85 font-bold whitespace-nowrap' style={{ textShadow: '0 1px 2px rgba(255,255,255,0.15)' }}>FLIK'D</span>
+          </div>
         </div>
 
         {expanded && (
           <div className='px-5 py-2 flex items-center gap-2' style={{ animation: 'navFadeIn .2s ease-out' }}>
-            <kbd className='text-[8px] font-mono bg-black/20 text-black/40 px-1.5 py-0.5 rounded border border-black/15'>⌘K</kbd>
-            <span className='text-[8px] text-black/35'>Quick search</span>
+            <kbd className='text-[8px] font-mono bg-black/15 text-black/50 px-2 py-0.5 rounded-md border border-black/15 shadow-[inset_0_1px_0_rgba(255,255,255,0.1)]'>⌘K</kbd>
+            <span className='text-[9px] text-black/40 font-medium'>Quick search</span>
           </div>
         )}
 
@@ -1330,16 +1336,16 @@ const Navbar = ({ currentUser: propUser }) => {
                     onMouseLeave={() => setNavItemHover(null)}
                     onClick={() => { if (item.panel) setActivePanel(p => p === item.panel ? null : item.panel); else { setActivePanel(null); navigate(item.path) } }}
                     style={{ touchAction: 'manipulation' }}
-                    className={`w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl font-bebas text-lg tracking-wide transition-all duration-200 group relative ${isRoute || isPanelOn ? 'bg-black text-[#D4AF37] shadow-lg shadow-black/30 scale-[1.02]' : 'text-black/65 hover:text-black hover:bg-white/30 hover:scale-[1.01] active:scale-[0.99]'}`}>
+                    className={`w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl font-bebas text-lg tracking-wide transition-all duration-200 group relative ${isRoute || isPanelOn ? 'bg-black/90 text-[#D4AF37] shadow-[0_6px_24px_rgba(0,0,0,0.55)] scale-[1.02]' : 'text-black/65 hover:text-black hover:bg-white/30 hover:scale-[1.01] active:scale-[0.99]'}`}>
                     <div className={`w-6 h-6 flex-shrink-0 relative transition-all duration-200 ${isRoute || isPanelOn || isHovered ? 'scale-110' : ''}`}>
                       <svg className='w-6 h-6' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d={item.icon} /></svg>
                       {badge > 0 && <div className='absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-red-500 border-2 border-[#D4AF37] flex items-center justify-center shadow-sm'><span className='text-[8px] font-black text-white leading-none'>{badge}</span></div>}
                     </div>
                     <span className={`whitespace-nowrap font-bebas text-lg tracking-wide flex-1 transition-all duration-300 ${expanded ? 'opacity-100 translate-x-0' : 'opacity-0 -translate-x-3 pointer-events-none'}`}>{item.label}</span>
                     {badge > 0 && expanded && <span className='flex-shrink-0 px-1.5 py-0.5 rounded-full bg-red-500 text-white text-[9px] font-black'>{badge}</span>}
-                    {isPanelOn && expanded && <span className='w-1.5 h-1.5 rounded-full bg-[#D4AF37] flex-shrink-0 animate-pulse' />}
-                    {(isRoute || isPanelOn) && !expanded && <div className='absolute -right-1 top-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-black shadow-lg' />}
-                    {!expanded && <div className={`absolute left-full ml-5 px-3 py-2 bg-black text-[#D4AF37] text-[13px] font-bebas tracking-wide rounded-xl whitespace-nowrap transition-all duration-200 pointer-events-none shadow-xl z-50 ${isHovered ? 'opacity-100 translate-x-0' : 'opacity-0 -translate-x-2'}`}>{item.label}{badge > 0 && <span className='ml-2 px-1.5 py-0.5 rounded-full bg-red-500 text-white text-[9px] font-black'>{badge}</span>}<div className='absolute left-0 top-1/2 -translate-y-1/2 -translate-x-[5px] w-2.5 h-2.5 bg-black rotate-45' /></div>}
+                    {isPanelOn && expanded && <span className='w-2 h-2 rounded-full bg-[#D4AF37] flex-shrink-0 animate-pulse shadow-[0_0_6px_rgba(212,175,55,0.8)]' />}
+                    {(isRoute || isPanelOn) && !expanded && <div className='absolute -right-1 top-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-[#D4AF37] shadow-[0_0_6px_rgba(212,175,55,0.6)]' />}
+                    {!expanded && <div className={`absolute left-full ml-4 px-3.5 py-2 text-[#D4AF37] text-[13px] font-bebas tracking-wide rounded-xl whitespace-nowrap transition-all duration-200 pointer-events-none z-50 border border-[#D4AF37]/15 ${isHovered ? 'opacity-100 translate-x-0' : 'opacity-0 -translate-x-2'}`} style={{ background: 'linear-gradient(135deg, #0E0E0E, #0A0A0A)', boxShadow: '0 8px 32px rgba(0,0,0,0.8), 0 0 0 1px rgba(212,175,55,0.08)' }}>{item.label}{badge > 0 && <span className='ml-2 px-1.5 py-0.5 rounded-full bg-red-500 text-white text-[9px] font-black'>{badge}</span>}<div className='absolute left-0 top-1/2 -translate-y-1/2 -translate-x-[5px] w-2.5 h-2.5 rotate-45 border-l border-b border-[#D4AF37]/15' style={{ background: '#0E0E0E' }} /></div>}
                   </button>
                 </li>
               )
@@ -1348,13 +1354,13 @@ const Navbar = ({ currentUser: propUser }) => {
         </nav>
 
         {/* Footer */}
-        <div className='relative p-4 space-y-1.5 border-t border-black/10'>
+        <div className='relative p-4 space-y-1.5 border-t border-black/10' style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.08), transparent)' }}>
           <button onClick={() => setActivePanel(p => p === 'settings' ? null : 'settings')} style={{ touchAction: 'manipulation' }}
             className='w-full flex items-center gap-3 px-3 py-3 rounded-2xl text-black/65 hover:text-black hover:bg-white/30 transition-all duration-200 group active:scale-[0.98]'>
             <div className='relative w-11 h-11 flex-shrink-0'>
               <svg width='44' height='44' viewBox='0 0 44 44' className='absolute top-0 left-0'>
-                <circle cx='22' cy='22' r={levelR} fill='none' stroke='rgba(0,0,0,0.15)' strokeWidth='2' />
-                <circle cx='22' cy='22' r={levelR} fill='none' stroke='rgba(0,0,0,0.45)' strokeWidth='2' strokeDasharray={`${levelC * levelProgress / 100} ${levelC}`} strokeLinecap='round' transform='rotate(-90 22 22)' style={{ transition: 'stroke-dasharray 0.8s ease' }} />
+                <circle cx='22' cy='22' r={levelR} fill='none' stroke='rgba(0,0,0,0.22)' strokeWidth='2.5' />
+                <circle cx='22' cy='22' r={levelR} fill='none' stroke='rgba(0,0,0,0.65)' strokeWidth='2.5' strokeDasharray={`${levelC * levelProgress / 100} ${levelC}`} strokeLinecap='round' transform='rotate(-90 22 22)' style={{ transition: 'stroke-dasharray 0.8s ease' }} />
               </svg>
               {user?.avatar && !avatarErr
                 ? <img src={user.avatar} alt={user.name} onError={() => setAvatarErr(true)} loading='lazy' className='w-10 h-10 rounded-full object-cover ring-2 ring-black/20 group-hover:ring-black/40 transition-all duration-200 absolute top-0.5 left-0.5' />
@@ -1366,8 +1372,11 @@ const Navbar = ({ currentUser: propUser }) => {
             </div>
             {expanded && !loadingUser && (
               <div className={`flex-1 text-left overflow-hidden transition-all duration-300 ${expanded ? 'opacity-100' : 'opacity-0'}`}>
-                <p className='text-[14px] font-bebas text-black truncate tracking-wide'>{user?.name || 'User'}</p>
-                <div className='flex items-center gap-1'><span className='text-[10px] font-bebas text-black/50'>LVL {user?.level}</span><span className='text-black/25 text-[10px]'>·</span><span className='text-[10px] font-bebas text-black/50'>{(user?.points || 0).toLocaleString()} XP</span></div>
+                <p className='text-[14px] font-bebas text-black/90 truncate tracking-wide leading-tight'>{user?.name || 'User'}</p>
+                <div className='flex items-center gap-1.5 mt-0.5'>
+                  <span className='text-[9px] font-black text-black/60 bg-black/10 px-1.5 py-0.5 rounded-md uppercase tracking-wider'>LVL {user?.level}</span>
+                  <span className='text-[9px] font-semibold text-black/40'>{(user?.points || 0).toLocaleString()} XP</span>
+                </div>
               </div>
             )}
           </button>
@@ -1378,27 +1387,27 @@ const Navbar = ({ currentUser: propUser }) => {
               <svg className='w-5 h-5 transition-transform duration-200 group-hover:translate-x-0.5' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1' /></svg>
             </div>
             {expanded && <span className={`font-bebas text-base tracking-wider transition-all duration-300 ${expanded ? 'opacity-100' : 'opacity-0'}`}>SIGN OUT</span>}
-            {!expanded && <div className='absolute left-full ml-5 px-3 py-2 bg-black text-red-400 text-[13px] font-bebas tracking-wide rounded-xl whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none shadow-xl z-50'>Sign Out<div className='absolute left-0 top-1/2 -translate-y-1/2 -translate-x-[5px] w-2.5 h-2.5 bg-black rotate-45' /></div>}
+            {!expanded && <div className='absolute left-full ml-4 px-3.5 py-2 text-red-400 text-[13px] font-bebas tracking-wide rounded-xl whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none z-50 border border-red-500/15' style={{ background: 'linear-gradient(135deg, #0E0E0E, #0A0A0A)', boxShadow: '0 8px 32px rgba(0,0,0,0.8)' }}>Sign Out<div className='absolute left-0 top-1/2 -translate-y-1/2 -translate-x-[5px] w-2.5 h-2.5 rotate-45 border-l border-b border-red-500/15' style={{ background: '#0E0E0E' }} /></div>}
           </button>
         </div>
       </div>
 
       {/* ═══ MOBILE TOP BAR ═══ */}
-      <div className='lg:hidden fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-4' style={{ height: '57px', paddingTop: 'env(safe-area-inset-top, 0px)', background: 'rgba(7,7,7,0.97)', borderBottom: '1px solid rgba(212,175,55,0.10)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' }}>
-        <div className='absolute bottom-0 left-0 right-0 h-[1px]' style={{ background: 'linear-gradient(90deg, transparent 0%, #D4AF37 50%, transparent 100%)' }} />
-        <button onClick={() => navigate('/home')} style={{ touchAction: 'manipulation' }} className='flex items-center gap-2.5'>
-          <div className='w-8 h-8 bg-[#D4AF37] rounded-xl flex items-center justify-center shadow-[0_4px_16px_rgba(212,175,55,0.3)]'>
+      <div className='lg:hidden fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-4' style={{ height: '58px', paddingTop: 'env(safe-area-inset-top, 0px)', background: 'rgba(6,6,6,0.97)', backdropFilter: 'blur(24px)', WebkitBackdropFilter: 'blur(24px)', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+        <div className='absolute bottom-0 left-0 right-0 h-[1px]' style={{ background: 'linear-gradient(90deg, transparent 5%, #D4AF37 40%, #F5D060 50%, #D4AF37 60%, transparent 95%)', opacity: 0.7 }} />
+        <button onClick={() => navigate('/home')} style={{ touchAction: 'manipulation' }} className='flex items-center gap-2.5 active:scale-95 transition-transform duration-150'>
+          <div className='w-8 h-8 rounded-xl flex items-center justify-center shadow-[0_4px_16px_rgba(212,175,55,0.4)]' style={{ background: 'linear-gradient(135deg, #D4AF37, #F0C93A)' }}>
             <img src={logo} alt="Flik'd" className='w-6 h-6 object-contain' />
           </div>
-          <span className='font-bebas text-xl tracking-[0.15em] text-[#D4AF37]'>FLIK'D</span>
+          <span className='font-bebas text-xl tracking-[0.15em] text-[#D4AF37]' style={{ textShadow: '0 0 20px rgba(212,175,55,0.3)' }}>FLIK'D</span>
         </button>
-        <div className='flex items-center gap-2'>
+        <div className='flex items-center gap-1.5'>
           <button onClick={() => setActivePanel(p => p === 'search' ? null : 'search')} style={{ touchAction: 'manipulation', minWidth: '40px', minHeight: '40px' }}
-            className={`w-9 h-9 rounded-xl flex items-center justify-center transition-all duration-200 ${activePanel === 'search' ? 'bg-[#D4AF37]/20 text-[#D4AF37]' : 'bg-white/[0.06] text-white/50 hover:bg-white/10'}`}>
+            className={`w-9 h-9 rounded-xl flex items-center justify-center transition-all duration-200 border ${activePanel === 'search' ? 'bg-[#D4AF37]/15 border-[#D4AF37]/40 text-[#D4AF37]' : 'bg-white/[0.04] border-white/[0.06] text-white/40 hover:bg-white/[0.08] hover:text-white/70'}`}>
             <svg style={{ width: '18px', height: '18px' }} fill='none' stroke='currentColor' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z' /></svg>
           </button>
           <button onClick={() => setActivePanel(p => p === 'settings' ? null : 'settings')} style={{ touchAction: 'manipulation', minWidth: '40px', minHeight: '40px' }}
-            className={`w-9 h-9 rounded-xl flex items-center justify-center transition-all duration-200 overflow-hidden border ${activePanel === 'settings' ? 'border-[#D4AF37]/60 ring-2 ring-[#D4AF37]/20' : 'border-white/10 hover:border-[#D4AF37]/30'}`}>
+            className={`w-9 h-9 rounded-xl flex items-center justify-center transition-all duration-200 overflow-hidden border ${activePanel === 'settings' ? 'border-[#D4AF37]/50 ring-2 ring-[#D4AF37]/15 shadow-[0_0_12px_rgba(212,175,55,0.2)]' : 'border-white/[0.08] hover:border-[#D4AF37]/30'}`}>
             {user?.avatar && !avatarErr ? <img src={user.avatar} onError={() => setAvatarErr(true)} className='w-full h-full object-cover' alt='profile' /> : <span className='font-bebas text-sm text-[#D4AF37]'>{initials()}</span>}
           </button>
         </div>
