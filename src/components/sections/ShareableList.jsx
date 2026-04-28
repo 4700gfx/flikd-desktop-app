@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
+import ReactDOM from 'react-dom'
 import supabase from '../../config/SupabaseClient'
 import QuizModal, { checkQuizCooldown } from './QuizModal'
 
@@ -530,8 +531,8 @@ const ShareableList = ({ list, currentUser, onClose, isOwner: propIsOwner }) => 
 
   if (!list) return null
 
-  return (
-    <div className='fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/85 backdrop-blur-md'
+  return ReactDOM.createPortal(
+    <div className='fixed inset-0 z-[9100] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/85 backdrop-blur-md'
       style={{ animation: 'qOverlayIn 0.2s ease-out' }}
       onClick={e => e.target === e.currentTarget && onClose()}>
 
@@ -705,7 +706,8 @@ const ShareableList = ({ list, currentUser, onClose, isOwner: propIsOwner }) => 
         @keyframes qFadeUp    { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
         @keyframes spin       { to{transform:rotate(360deg)} }
       `}</style>
-    </div>
+    </div>,
+    document.body
   )
 }
 

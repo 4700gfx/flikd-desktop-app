@@ -643,13 +643,31 @@ const MovieCard = ({ item, index, userId, isOwner, onToggle, onRemove }) => {
 
 /* ─── List Detail Modal ────────────────────────────── */
 const ListModal = ({ list, userId, onClose, onCountChange }) => {
-  const [items,   setItems]   = useState([])
-  const [loading, setLoading] = useState(true)
-  const [error,   setError]   = useState(null)
-  const [filter,  setFilter]  = useState('all')
-  const [shareOpen, setShareOpen] = useState(false)
+  const [items,         setItems]         = useState([])
+  const [loading,       setLoading]       = useState(true)
+  const [error,         setError]         = useState(null)
+  const [filter,        setFilter]        = useState('all')
+  const [shareOpen,     setShareOpen]     = useState(false)
+  const [listIsCollab,  setListIsCollab]  = useState(list?.isCollab || false)
+  const [enablingShare, setEnablingShare] = useState(false)
 
   const isOwner = list?.user_id === userId
+
+  const handleOpenShare = async () => {
+    if (!listIsCollab && isOwner) {
+      setEnablingShare(true)
+      try {
+        await supabase.from('lists').update({ is_collaborative: true }).eq('id', list.id)
+        await supabase.from('list_collaborators').upsert(
+          { list_id: list.id, user_id: userId, role: 'owner' },
+          { onConflict: 'list_id,user_id' }
+        )
+        setListIsCollab(true)
+      } catch {}
+      setEnablingShare(false)
+    }
+    setShareOpen(true)
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -710,7 +728,7 @@ const ListModal = ({ list, userId, onClose, onCountChange }) => {
   return ReactDOM.createPortal(
     <>
       <div
-        className='fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/88 backdrop-blur-md'
+        className='fixed inset-0 z-[9000] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/88 backdrop-blur-md'
         onClick={e => e.target === e.currentTarget && onClose()}
         style={{ animation: 'clTabOverlayIn 0.2s ease-out' }}>
 
@@ -737,7 +755,7 @@ const ListModal = ({ list, userId, onClose, onCountChange }) => {
                   {list.isPublic && (
                     <span className='px-2 py-0.5 bg-blue-500/10 border border-blue-500/20 text-blue-400 text-[10px] font-black rounded-full uppercase tracking-widest'>Public</span>
                   )}
-                  {list.isCollab && (
+                  {listIsCollab && (
                     <span className='px-2 py-0.5 bg-purple-400/8 border border-purple-400/20 text-purple-400 text-[10px] font-black rounded-full uppercase tracking-widest'>Shared</span>
                   )}
                 </div>
@@ -749,13 +767,18 @@ const ListModal = ({ list, userId, onClose, onCountChange }) => {
                 </div>
               </div>
               <div className='flex items-center gap-2 flex-shrink-0'>
-                {/* Share button for collab lists */}
-                {list.isCollab && (
+                {/* Share button — visible for all owner lists */}
+                {isOwner && (
                   <button
-                    onClick={() => setShareOpen(true)}
+                    onClick={handleOpenShare}
+                    disabled={enablingShare}
+                    title={listIsCollab ? 'Manage collaborators' : 'Share this list'}
                     style={{ touchAction: 'manipulation' }}
-                    className='w-9 h-9 rounded-xl border border-purple-400/20 bg-purple-400/6 flex items-center justify-center text-purple-400/60 hover:text-purple-400 hover:bg-purple-400/15 transition-all'>
-                    <svg className='w-4 h-4' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z' /></svg>
+                    className={`w-9 h-9 rounded-xl border flex items-center justify-center transition-all ${listIsCollab ? 'border-purple-400/20 bg-purple-400/6 text-purple-400/60 hover:text-purple-400 hover:bg-purple-400/15' : 'border-white/10 bg-white/[0.03] text-white/30 hover:text-white/60 hover:bg-white/[0.06] hover:border-white/20'} ${enablingShare ? 'opacity-60' : ''}`}>
+                    {enablingShare
+                      ? <Spin cls='w-4 h-4' />
+                      : <svg className='w-4 h-4' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z' /></svg>
+                    }
                   </button>
                 )}
                 <button onClick={onClose} style={{ touchAction: 'manipulation' }}
@@ -880,7 +903,7 @@ const ListModal = ({ list, userId, onClose, onCountChange }) => {
       {/* Shareable list modal (for collab lists) */}
       {shareOpen && (
         <ShareableList
-          list={{ id: list.id, name: list.name, description: list.description, is_public: list.isPublic, user_id: list.user_id }}
+          list={{ id: list.id, name: list.name, description: list.description, is_public: list.isPublic, is_collaborative: true, user_id: list.user_id }}
           currentUser={{ id: userId }}
           isOwner={isOwner}
           onClose={() => setShareOpen(false)}
