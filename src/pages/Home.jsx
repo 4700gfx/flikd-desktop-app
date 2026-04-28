@@ -21,28 +21,33 @@ const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY
 const PAGE_SIZE = 20
 
 /* ─── Skeleton ──────────────────────────────────────────────── */
+const SkeletonBlock = ({ className = '' }) => (
+  <div className={`rounded-lg ${className}`}
+    style={{ background: 'linear-gradient(90deg, #141414 25%, #1C1C1C 50%, #141414 75%)', backgroundSize: '200% 100%', animation: 'shimmer 1.8s ease-in-out infinite' }} />
+)
+
 const PostSkeleton = ({ delay = 0 }) => (
-  <div className='px-5 py-5 border-b border-[#141414] animate-pulse' style={{ animationDelay: `${delay}ms` }}>
+  <div className='px-5 py-5 border-b border-[#131313]' style={{ animationDelay: `${delay}ms` }}>
     <div className='flex items-start gap-3'>
-      <div className='w-10 h-10 rounded-full bg-[#181818] flex-shrink-0' />
+      <div className='w-10 h-10 rounded-full flex-shrink-0' style={{ background: 'linear-gradient(90deg, #181818 25%, #202020 50%, #181818 75%)', backgroundSize: '200% 100%', animation: `shimmer 1.8s ease-in-out ${delay}ms infinite` }} />
       <div className='flex-1 space-y-3'>
         <div className='flex gap-3'>
-          <div className='h-3 w-24 bg-[#181818] rounded-full' />
-          <div className='h-3 w-14 bg-[#141414] rounded-full' />
+          <SkeletonBlock className='h-3 w-24' />
+          <SkeletonBlock className='h-3 w-14 opacity-60' />
         </div>
-        <div className='rounded-2xl bg-[#0F0F0F] border border-[#181818] overflow-hidden'>
-          <div className='h-36 bg-[#141414]' />
+        <div className='rounded-2xl border border-[#181818] overflow-hidden' style={{ background: '#0F0F0F' }}>
+          <SkeletonBlock className='h-36 rounded-none' />
           <div className='flex gap-4 p-4'>
-            <div className='w-16 h-24 bg-[#181818] rounded-xl -mt-10 flex-shrink-0' />
+            <SkeletonBlock className='w-16 h-24 rounded-xl -mt-10 flex-shrink-0' />
             <div className='flex-1 space-y-2 pt-1'>
-              <div className='h-4 w-3/4 bg-[#181818] rounded-lg' />
-              <div className='h-3 w-1/3 bg-[#141414] rounded-full' />
+              <SkeletonBlock className='h-4 w-3/4' />
+              <SkeletonBlock className='h-3 w-1/3 opacity-60' />
             </div>
           </div>
         </div>
         <div className='space-y-1.5'>
-          <div className='h-3 bg-[#141414] rounded-full w-full' />
-          <div className='h-3 bg-[#141414] rounded-full w-4/5' />
+          <SkeletonBlock className='h-3 w-full opacity-60' />
+          <SkeletonBlock className='h-3 w-4/5 opacity-40' />
         </div>
       </div>
     </div>
@@ -52,7 +57,7 @@ const PostSkeleton = ({ delay = 0 }) => (
 /* ─── Bento stat tile ────────────────────────────────────────── */
 const BentoStat = ({ icon, label, value, accent = false, wide = false }) => (
   <div className={`rounded-2xl border transition-all duration-200 cursor-default group
-    hover:border-[#D4AF37]/25 hover:bg-[#0F0F0F]
+    hover:border-[#D4AF37]/25 hover:bg-[#0F0F0F] hover:shadow-[0_4px_20px_rgba(0,0,0,0.4)]
     ${accent
       ? 'bg-[#D4AF37]/5 border-[#D4AF37]/20'
       : 'bg-[#0D0D0D] border-[#181818]'
@@ -76,7 +81,7 @@ const BentoStat = ({ icon, label, value, accent = false, wide = false }) => (
 const StreakCard = ({ streak }) => (
   <div className='rounded-2xl bg-gradient-to-br from-[#D4AF37]/10 to-[#D4AF37]/3
     border border-[#D4AF37]/20 flex items-center justify-between px-4 py-3.5
-    hover:border-[#D4AF37]/35 transition-all duration-200 cursor-default'>
+    hover:border-[#D4AF37]/40 hover:shadow-[0_4px_24px_rgba(212,175,55,0.10)] transition-all duration-200 cursor-default'>
     <div>
       <p className='text-[9px] font-black text-[#D4AF37]/60 uppercase tracking-[0.18em] mb-1'
         style={{ fontFamily: "'Bebas Neue', sans-serif" }}>
@@ -86,7 +91,7 @@ const StreakCard = ({ streak }) => (
         {streak}
       </p>
     </div>
-    <div className='text-4xl' style={{ filter: 'drop-shadow(0 0 8px rgba(212,175,55,0.4))' }}>🔥</div>
+    <div className='text-4xl' style={{ filter: 'drop-shadow(0 0 12px rgba(212,175,55,0.5)) drop-shadow(0 2px 6px rgba(255,100,0,0.3))' }}>🔥</div>
   </div>
 )
 
@@ -161,17 +166,17 @@ const HomeInner = ({
             </h1>
             {currentUser && (
               <div className='flex items-center gap-2'>
-                <div className='flex items-center gap-1.5 px-3 py-1.5 bg-[#141414] border border-[#222] rounded-full
-                  hover:border-[#D4AF37]/25 transition-colors duration-200'>
+                <div className='flex items-center gap-1.5 px-3 py-1.5 rounded-full border transition-colors duration-200'
+                  style={{ background: 'rgba(212,175,55,0.06)', borderColor: 'rgba(212,175,55,0.18)' }}>
                   <svg className='w-3 h-3 text-[#D4AF37]' fill='currentColor' viewBox='0 0 20 20'>
                     <path d='M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z' />
                   </svg>
-                  <span className='font-bold text-white text-[13px] tabular-nums'
+                  <span className='font-bold text-[#D4AF37]/90 text-[13px] tabular-nums'
                     style={{ fontFamily: "'Bebas Neue', sans-serif", letterSpacing: '0.04em' }}>
                     {currentUser.totalPoints.toLocaleString()}
                   </span>
                 </div>
-                <div className='px-3 py-1.5 rounded-full text-[#0A0A0A] font-black text-[12px]'
+                <div className='px-3 py-1.5 rounded-full text-[#0A0A0A] font-black text-[12px] shadow-[0_2px_8px_rgba(212,175,55,0.25)]'
                   style={{ background: 'linear-gradient(135deg, #D4AF37, #F0C93A)', fontFamily: "'Bebas Neue', sans-serif", letterSpacing: '0.08em' }}>
                   LVL {currentUser.level}
                 </div>
@@ -185,13 +190,13 @@ const HomeInner = ({
             {FEED_TABS.map(tab => (
               <button key={tab.id} onClick={() => setFeedTab(tab.id)}
                 className={`flex items-center gap-1.5 px-3 sm:px-4 py-3 border-b-2 -mb-px
-                  transition-all duration-200 whitespace-nowrap flex-shrink-0
+                  transition-all duration-200 whitespace-nowrap flex-shrink-0 rounded-t-lg
                   ${feedTab === tab.id
-                    ? 'text-[#D4AF37] border-[#D4AF37]'
-                    : 'text-white/30 border-transparent hover:text-white/60 hover:border-white/10'
+                    ? 'text-[#D4AF37] border-[#D4AF37] bg-[#D4AF37]/[0.04]'
+                    : 'text-white/30 border-transparent hover:text-white/60 hover:border-white/10 hover:bg-white/[0.02]'
                   }`}
                 style={{ fontFamily: "'Bebas Neue', sans-serif", letterSpacing: '0.08em', fontSize: '12px' }}>
-                <span style={{ transition: 'transform .2s', transform: feedTab === tab.id ? 'scale(1.2)' : 'scale(1)' }}>
+                <span style={{ transition: 'transform .2s', transform: feedTab === tab.id ? 'scale(1.15)' : 'scale(1)' }}>
                   {tab.icon}
                 </span>
                 {tab.label}
@@ -272,9 +277,9 @@ const HomeInner = ({
           <button
             onClick={() => mainRef.current?.scrollTo({ top: 0, behavior: 'smooth' })}
             className='fixed bottom-24 lg:bottom-8 right-4 lg:right-8 z-50 flex items-center gap-2 px-4 py-2.5 rounded-full
-              border border-[#D4AF37]/30 shadow-2xl shadow-black/60
-              hover:border-[#D4AF37]/60 hover:scale-105 active:scale-95 transition-all duration-200'
-            style={{ background: 'linear-gradient(135deg, #0E0E0E, #141414)', animation: 'scrollTopIn .2s ease-out' }}>
+              border border-[#D4AF37]/35 shadow-[0_8px_32px_rgba(0,0,0,0.8),_0_0_20px_rgba(212,175,55,0.08)]
+              hover:border-[#D4AF37]/65 hover:scale-105 hover:shadow-[0_8px_32px_rgba(0,0,0,0.8),_0_0_30px_rgba(212,175,55,0.15)] active:scale-95 transition-all duration-200'
+            style={{ background: 'linear-gradient(135deg, #111, #0D0D0D)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', animation: 'scrollTopIn .2s ease-out' }}>
             <svg className='w-3.5 h-3.5 text-[#D4AF37]' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
               <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M5 10l7-7m0 0l7 7m-7-7v18' />
             </svg>
@@ -289,16 +294,16 @@ const HomeInner = ({
       {/* ══════════ BENTO SIDEBAR ══════════ */}
       <aside className='hidden xl:flex flex-col w-72 2xl:w-80 flex-shrink-0
         sticky top-0 h-screen overflow-y-auto py-4 space-y-3 pr-1'
-        style={{ scrollbarWidth: 'none' }}>
+        style={{ scrollbarWidth: 'none', scrollbarColor: 'transparent transparent' }}>
 
         {/* ── Bento profile card ── */}
         {currentUser && (
-          <div className='rounded-2xl border border-[#181818] bg-[#0D0D0D] overflow-hidden'>
+          <div className='rounded-2xl border border-[#1A1A1A] overflow-hidden' style={{ background: 'linear-gradient(160deg, #0F0F0F 0%, #0A0A0A 100%)' }}>
             <div className='h-[3px]'
-              style={{ background: 'linear-gradient(90deg, transparent, #D4AF37 30%, #F0C93A 50%, #D4AF37 70%, transparent)' }} />
+              style={{ background: 'linear-gradient(90deg, transparent, #D4AF37 20%, #F5D060 50%, #D4AF37 80%, transparent)', boxShadow: '0 0 16px rgba(212,175,55,0.4)' }} />
             <div className='p-4'>
               <div className='flex items-center gap-3 mb-4'>
-                <div className='w-10 h-10 rounded-full overflow-hidden ring-2 ring-[#D4AF37]/20 flex-shrink-0'>
+                <div className='w-11 h-11 rounded-full overflow-hidden ring-2 ring-[#D4AF37]/25 shadow-[0_4px_16px_rgba(0,0,0,0.5)] flex-shrink-0'>
                   {currentUser.avatar
                     ? <img src={currentUser.avatar} alt={currentUser.displayName} className='w-full h-full object-cover' />
                     : <div className='w-full h-full flex items-center justify-center text-[#0A0A0A] font-black'
@@ -308,12 +313,12 @@ const HomeInner = ({
                   }
                 </div>
                 <div className='flex-1 min-w-0'>
-                  <p className='text-white font-semibold text-[13px] truncate'>{currentUser.displayName}</p>
+                  <p className='text-white/95 font-semibold text-[13px] truncate'>{currentUser.displayName}</p>
                   {currentUser.username && (
-                    <p className='text-[11px] text-white/30'>@{currentUser.username}</p>
+                    <p className='text-[11px] text-white/35'>@{currentUser.username}</p>
                   )}
                 </div>
-                <div className='px-2 py-1 rounded-full flex-shrink-0 text-[#0A0A0A] font-black text-[10px]'
+                <div className='px-2.5 py-1 rounded-full flex-shrink-0 text-[#0A0A0A] font-black text-[10px] shadow-[0_2px_8px_rgba(212,175,55,0.3)]'
                   style={{ background: 'linear-gradient(135deg, #D4AF37, #F0C93A)', fontFamily: "'Bebas Neue', sans-serif", letterSpacing: '0.08em' }}>
                   LVL {currentUser.level}
                 </div>
@@ -344,7 +349,8 @@ const HomeInner = ({
                   <div className='h-full rounded-full transition-all duration-1000'
                     style={{
                       width: `${((currentUser.totalPoints % 500) / 500) * 100}%`,
-                      background: 'linear-gradient(90deg, #D4AF37, #F0C93A)',
+                      background: 'linear-gradient(90deg, #C49A2A, #D4AF37, #F5D060)',
+                      boxShadow: '0 0 8px rgba(212,175,55,0.4)',
                     }} />
                 </div>
               </div>
@@ -818,6 +824,7 @@ const Home = () => {
         <style>{`
           @keyframes postReveal   { from { opacity:0; transform:translateY(14px) } to { opacity:1; transform:translateY(0) } }
           @keyframes scrollTopIn  { from { opacity:0; transform:translateY(8px)  } to { opacity:1; transform:translateY(0) } }
+          @keyframes shimmer      { from { background-position: -200% 0 } to { background-position: 200% 0 } }
         `}</style>
       </div>
     </ListProgressProvider>
