@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
+import ReactDOM from 'react-dom'
 import supabase from '../../config/SupabaseClient'
 import QuizModal, { checkQuizCooldown, recordQuizPass } from './QuizModal'
 import ShareableList, { RemoveItemModal } from './ShareableList'
@@ -706,7 +707,7 @@ const ListModal = ({ list, userId, onClose, onCountChange }) => {
                    : movies
   const filtShows  = filter === 'watched' ? [] : shows
 
-  return (
+  return ReactDOM.createPortal(
     <>
       <div
         className='fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/88 backdrop-blur-md'
@@ -885,7 +886,8 @@ const ListModal = ({ list, userId, onClose, onCountChange }) => {
           onClose={() => setShareOpen(false)}
         />
       )}
-    </>
+    </>,
+    document.body
   )
 }
 
@@ -930,9 +932,8 @@ const CurrentListTab = ({ lists = [], userId, onViewAll, onListUpdate }) => {
             const full = p === 100 && total > 0
             return (
               <button key={list.id} onClick={() => setActiveList(list)}
-                style={{ touchAction: 'manipulation' }}
-                className='w-full px-4 py-3.5 hover:bg-[#0D0D0D] active:bg-[#111] transition-colors text-left group'
-                style={{ animation: `clTabRowIn 0.3s ease-out ${i * 0.05}s both` }}>
+                style={{ touchAction: 'manipulation', animation: `clTabRowIn 0.3s ease-out ${i * 0.05}s both` }}
+                className='w-full px-4 py-3.5 hover:bg-[#0D0D0D] active:bg-[#111] transition-colors text-left group'>
                 <div className='flex items-center justify-between gap-2 mb-2'>
                   <div className='flex items-center gap-1.5 flex-1 min-w-0'>
                     <span className='text-sm font-semibold text-white/70 group-hover:text-white transition-colors line-clamp-1 flex-1'>{list.name}</span>

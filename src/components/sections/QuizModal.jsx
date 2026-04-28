@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
+import ReactDOM from 'react-dom'
 
 /**
  * QuizModal — Standalone AI Quiz Component
@@ -279,7 +280,7 @@ const QuizModal = ({
   const timerPct = (timeLeft / 30) * 100
   const timerColor = timeLeft > 15 ? '#D4AF37' : timeLeft > 7 ? '#F59E0B' : '#EF4444'
 
-  return (
+  return ReactDOM.createPortal(
     <div
       ref={overlayRef}
       onClick={handleOverlayClick}
@@ -370,9 +371,12 @@ const QuizModal = ({
         @keyframes qShake { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-4px)} 75%{transform:translateX(4px)} }
         @keyframes qBounce { 0%,100%{transform:scale(1)} 50%{transform:scale(1.05)} }
       `}</style>
-    </div>
+    </div>,
+    document.body
   )
 }
+
+
 
 /* ─── IDLE SCREEN ───────────────────────────────────── */
 const IdleScreen = ({ cfg, type, title, posterPath, tmdbImg, passCount, onStart, onClose, seasonNum, episodeNum, episodeName }) => {
