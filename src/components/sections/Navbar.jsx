@@ -4,6 +4,7 @@ import supabase from '../../config/SupabaseClient'
 import logo from '../../assets/photos/flikd-logo.png'
 import QuizModal, { checkQuizCooldown, recordQuizPass } from './QuizModal'
 import ShareableList, { RemoveItemModal } from './ShareableList'
+import { ListModal } from './CurrentListTab'
 
 /**
  * FLIK'D — Navigation System v6
@@ -182,7 +183,7 @@ const QuizWatchButton = ({ item, userId, onWatched, onUnwatch, size = 'sm' }) =>
 /* ─────────────────────────────────────────────────────
    PANEL 1 — SEARCH (unchanged from v5)
 ───────────────────────────────────────────────────── */
-const SearchPanel = () => {
+const SearchPanel = ({ currentUser }) => {
   const [q, setQ] = useState('')
   const [results, setResults] = useState([])
   const [searching, setSearching] = useState(false)
@@ -297,14 +298,66 @@ const SearchPanel = () => {
       <div className={`flex-1 overflow-hidden relative bg-[#060606] ${!hovered ? 'hidden sm:block' : 'block'}`}>
         {!hovered
           ? <div className='h-full flex items-center justify-center'><div className='text-center'><div className='w-20 h-20 rounded-full border border-[#181818] flex items-center justify-center mx-auto mb-4' style={{ background: 'radial-gradient(circle, rgba(212,175,55,0.04), transparent)' }}><svg className='w-8 h-8 text-[#D4AF37]/15' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={1} d='M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4' /></svg></div><p className='text-white/20 text-sm'>Hover a result to preview</p></div></div>
-          : <SearchDetailPreview item={hovered} detail={detail} loading={loadingDetail} />
+          : <SearchDetailPreview item={hovered} detail={detail} loading={loadingDetail} currentUser={currentUser} />
         }
       </div>
     </div>
   )
 }
 
-const SearchDetailPreview = ({ item, detail, loading }) => {
+const SearchDetailPreview = ({ item, detail, loading, currentUser }) => {
+  const [showListPicker, setShowListPicker] = useState(false)
+  const [userLists, setUserLists] = useState([])
+  const [listsLoading, setListsLoading] = useState(false)
+  const [addedTo, setAddedTo] = useState(new Set())
+  const [addStatus, setAddStatus] = useState({})
+
+  useEffect(() => {
+    setShowListPicker(false)
+    setAddStatus({})
+    setAddedTo(new Set())
+    setUserLists([])
+  }, [item.id])
+
+  const openListPicker = async () => {
+    const next = !showListPicker
+    setShowListPicker(next)
+    if (!next || !currentUser?.id || userLists.length > 0) return
+    setListsLoading(true)
+    try {
+      const [{ data: lists }, { data: existing }] = await Promise.all([
+        supabase.from('lists').select('id, name').eq('user_id', currentUser.id).is('deleted_at', null).order('updated_at', { ascending: false }),
+        supabase.from('list_items').select('list_id').eq('tmdb_id', item.id),
+      ])
+      setUserLists(lists || [])
+      setAddedTo(new Set((existing || []).map(e => String(e.list_id))))
+    } catch {}
+    setListsLoading(false)
+  }
+
+  const handleAddToList = async (listId) => {
+    if (addedTo.has(String(listId))) return
+    setAddStatus(prev => ({ ...prev, [listId]: 'loading' }))
+    try {
+      await supabase.from('list_items').insert({
+        list_id: listId,
+        tmdb_id: item.id,
+        title: item.title || item.name,
+        media_type: item.media_type,
+        poster_path: item.poster_path,
+        backdrop_path: detail?.backdrop_path || item.backdrop_path,
+        overview: detail?.overview || item.overview,
+        is_completed: false,
+        added_at: new Date().toISOString(),
+      })
+      setAddedTo(prev => new Set([...prev, String(listId)]))
+      setAddStatus(prev => ({ ...prev, [listId]: 'done' }))
+    } catch {
+      setAddStatus(prev => ({ ...prev, [listId]: 'error' }))
+      setTimeout(() => setAddStatus(prev => { const n = { ...prev }; delete n[listId]; return n }), 2000)
+    }
+  }
+
   const title = item.title || item.name
   const year = getYear(item.release_date || item.first_air_date)
   const backdrop = TMDB_IMG(detail?.backdrop_path || item.backdrop_path, 'w1280')
@@ -339,6 +392,48 @@ const SearchDetailPreview = ({ item, detail, loading }) => {
         </div>
         {loading && <div className='flex justify-center py-8'><Spinner size={24} /></div>}
         {!loading && (<>
+          {/* Add to List */}
+          {currentUser?.id && (
+            <div className='mb-4'>
+              <button onClick={openListPicker} style={{ touchAction: 'manipulation' }}
+                className={`w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl border text-[12px] font-bold transition-all duration-200 ${showListPicker ? 'bg-[#D4AF37]/12 border-[#D4AF37]/35 text-[#D4AF37]' : 'bg-[#111] border-white/[0.07] text-white/45 hover:border-[#D4AF37]/30 hover:text-[#D4AF37]/70 hover:bg-[#D4AF37]/5'}`}>
+                <svg className='w-3.5 h-3.5' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M12 4v16m8-8H4' /></svg>
+                {showListPicker ? 'Close' : 'Add to List'}
+              </button>
+              {showListPicker && (
+                <div className='mt-1.5 rounded-xl border border-white/[0.07] bg-[#0A0A0A] overflow-hidden' style={{ animation: 'navCardReveal .15s ease-out' }}>
+                  {listsLoading
+                    ? <div className='flex justify-center py-5'><Spinner size={18} /></div>
+                    : userLists.length === 0
+                      ? <p className='text-center text-white/20 text-[11px] py-4'>No lists yet — create one first!</p>
+                      : userLists.map(list => {
+                          const sid = String(list.id)
+                          const isAdded = addedTo.has(sid)
+                          const status = addStatus[list.id]
+                          return (
+                            <button key={list.id} onClick={() => handleAddToList(list.id)}
+                              disabled={isAdded || status === 'loading'}
+                              style={{ touchAction: 'manipulation' }}
+                              className={`w-full flex items-center justify-between px-3.5 py-2.5 text-left text-[12px] border-b border-white/[0.04] last:border-0 transition-all ${isAdded ? 'cursor-default' : 'hover:bg-white/[0.025]'}`}>
+                              <span className={`font-semibold truncate flex-1 ${isAdded ? 'text-[#D4AF37]/55' : 'text-white/60'}`}>{list.name}</span>
+                              <span className='flex-shrink-0 ml-3 text-[11px] font-bold'>
+                                {status === 'loading'
+                                  ? <Spinner size={12} />
+                                  : isAdded
+                                    ? <span className='text-[#D4AF37]'>✓ Added</span>
+                                    : status === 'error'
+                                      ? <span className='text-red-400'>✗ Error</span>
+                                      : <span className='text-white/25'>+ Add</span>
+                                }
+                              </span>
+                            </button>
+                          )
+                        })
+                  }
+                </div>
+              )}
+            </div>
+          )}
           {genres.length > 0 && <div className='flex flex-wrap gap-1.5 mb-4'>{genres.slice(0, 5).map(g => <span key={g} className='px-2.5 py-1 rounded-full text-[10px] font-bold border border-[#D4AF37]/20 text-[#D4AF37]/60 bg-[#D4AF37]/5 cursor-pointer'>{g}</span>)}</div>}
           {(detail?.overview || item.overview) && <p className='text-[12px] text-white/45 leading-relaxed mb-4 line-clamp-3'>{detail?.overview || item.overview}</p>}
           {director && <div className='mb-4 pb-4 border-b border-white/[0.04]'><p className='text-[9px] font-black text-white/20 uppercase tracking-[0.18em] mb-1'>{item.media_type === 'tv' ? 'Created by' : 'Directed by'}</p><p className='text-[13px] font-semibold text-white/70'>{director}</p></div>}
@@ -652,7 +747,7 @@ const RemoveItemBtn = ({ item, listId, onRemove }) => {
   return (
     <button onClick={e => { e.stopPropagation(); setConfirm(true) }}
       style={{ touchAction: 'manipulation', minWidth: '28px', minHeight: '28px' }}
-      className='w-7 h-7 rounded-lg border border-transparent text-white/10 hover:border-red-500/20 hover:text-red-400/50 hover:bg-red-500/4 transition-all flex items-center justify-center opacity-0 group-hover:opacity-100'>
+      className='w-7 h-7 rounded-lg border border-transparent text-white/20 hover:border-red-500/20 hover:text-red-400/60 hover:bg-red-500/4 transition-all flex items-center justify-center'>
       <svg className='w-3 h-3' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16' /></svg>
     </button>
   )
@@ -787,15 +882,13 @@ const LibraryRow = ({ item, index }) => {
 }
 
 /* ─────────────────────────────────────────────────────
-   PANEL 4 — WATCHLIST (with AI quiz + remove + share)
+   PANEL 4 — WATCHLIST (uses ListModal for full detail)
 ───────────────────────────────────────────────────── */
 const WatchlistPanel = ({ currentUser }) => {
   const [lists, setLists] = useState([])
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState('active')
-  const [expanded, setExpanded] = useState(null)
-  const [listItems, setListItems] = useState({})
-  const [loadingItem, setLoadingItem] = useState({})
+  const [activeList, setActiveList] = useState(null)
   const [shareableList, setShareableList] = useState(null)
 
   useEffect(() => {
@@ -818,48 +911,8 @@ const WatchlistPanel = ({ currentUser }) => {
     return () => { live = false }
   }, [currentUser?.id])
 
-  const openList = async (id) => {
-    if (listItems[id]) return
-    setLoadingItem(p => ({ ...p, [id]: true }))
-    const { data } = await supabase.from('list_items').select('*').eq('list_id', id).order('position', { ascending: true, nullsFirst: false })
-    setListItems(p => ({ ...p, [id]: data || [] }))
-    setLoadingItem(p => ({ ...p, [id]: false }))
-  }
-
-  const toggle = (id) => { const next = expanded === id ? null : id; setExpanded(next); if (next) openList(next) }
-
-  const handleWatched = useCallback(async (item) => {
-    await supabase.from('list_items').update({ is_completed: true, completed_at: new Date().toISOString() }).eq('id', item.id)
-    setListItems(prev => {
-      const updated = {}
-      for (const [lid, items] of Object.entries(prev)) updated[lid] = items.map(i => i.id === item.id ? { ...i, is_completed: true } : i)
-      return updated
-    })
-    setLists(prev => prev.map(l => {
-      const items = listItems[l.id] || []
-      if (!items.find(i => i.id === item.id)) return l
-      return { ...l, done: l.done + 1 }
-    }))
-  }, [listItems])
-
-  const handleUnwatch = useCallback(async (item) => {
-    await supabase.from('list_items').update({ is_completed: false, completed_at: null }).eq('id', item.id)
-    setListItems(prev => {
-      const updated = {}
-      for (const [lid, items] of Object.entries(prev)) updated[lid] = items.map(i => i.id === item.id ? { ...i, is_completed: false } : i)
-      return updated
-    })
-    setLists(prev => prev.map(l => {
-      const items = listItems[l.id] || []
-      if (!items.find(i => i.id === item.id)) return l
-      return { ...l, done: Math.max(0, l.done - 1) }
-    }))
-  }, [listItems])
-
-  const handleRemove = useCallback(async (listId, itemId) => {
-    setListItems(prev => ({ ...prev, [listId]: (prev[listId] || []).filter(i => i.id !== itemId) }))
-    setLists(prev => prev.map(l => l.id === listId ? { ...l, total: Math.max(0, l.total - 1) } : l))
-    try { await supabase.from('list_items').delete().eq('id', itemId) } catch {}
+  const handleCountChange = useCallback((listId, completedCount, itemCount) => {
+    setLists(prev => prev.map(l => l.id === listId ? { ...l, done: completedCount, total: itemCount } : l))
   }, [])
 
   const active = lists.filter(l => l.done < l.total || l.total === 0)
@@ -878,7 +931,7 @@ const WatchlistPanel = ({ currentUser }) => {
       {/* AI quiz notice */}
       <div className='mx-5 mt-3 flex items-center gap-2 px-3 py-2 rounded-xl bg-[#D4AF37]/5 border border-[#D4AF37]/15'>
         <span className='text-xs'>✨</span>
-        <p className='text-[10px] text-[#D4AF37]/55 font-semibold'>Watching an item requires passing an AI quiz to verify!</p>
+        <p className='text-[10px] text-[#D4AF37]/55 font-semibold'>Click a list to view items and verify watches with an AI quiz!</p>
       </div>
 
       <div className='flex border-b border-white/[0.04] mt-3 flex-shrink-0'>
@@ -898,14 +951,11 @@ const WatchlistPanel = ({ currentUser }) => {
             : shown.map((list, i) => {
                 const pct    = list.total ? Math.round((list.done / list.total) * 100) : 0
                 const isFull = pct === 100 && list.total > 0
-                const isOpen = expanded === list.id
-                const items  = listItems[list.id] || []
-
                 return (
                   <div key={list.id}
                     className={`rounded-2xl border overflow-hidden transition-all duration-200 ${isFull ? 'border-[#D4AF37]/20' : 'border-white/[0.05]'}`}
                     style={{ animation: `navCardReveal .22s ease-out ${i * 0.04}s both` }}>
-                    <button onClick={() => toggle(list.id)} style={{ touchAction: 'manipulation' }}
+                    <button onClick={() => setActiveList(list)} style={{ touchAction: 'manipulation' }}
                       className='w-full flex items-center gap-3 px-4 py-3.5 hover:bg-white/[0.02] transition-colors text-left'>
                       <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${isFull ? 'bg-[#D4AF37]/15' : 'bg-[#141414]'}`}>
                         {isFull
@@ -918,6 +968,7 @@ const WatchlistPanel = ({ currentUser }) => {
                           <span className='text-[13px] font-bold text-white/80 truncate'>{list.name}</span>
                           {list.isPublic && <span className='text-[8px] font-black text-blue-400/60 uppercase tracking-wider flex-shrink-0'>pub</span>}
                           {list.isCollab && <span className='text-[8px] font-black text-purple-400/60 uppercase tracking-wider flex-shrink-0 px-1.5 py-0.5 bg-purple-400/8 border border-purple-400/15 rounded-full'>Shared</span>}
+                          {isFull && <span className='text-[#D4AF37] text-xs ml-auto flex-shrink-0'>✓</span>}
                         </div>
                         <div className='flex items-center gap-2'>
                           <div className='flex-1 h-1.5 bg-[#1A1A1A] rounded-full overflow-hidden'>
@@ -927,7 +978,6 @@ const WatchlistPanel = ({ currentUser }) => {
                         </div>
                       </div>
                       <div className='flex items-center gap-1.5 flex-shrink-0'>
-                        {/* Open Shareable modal for collab lists */}
                         {list.isCollab && (
                           <button
                             onClick={e => { e.stopPropagation(); setShareableList({ id: list.id, name: list.name, description: list.description, is_public: list.isPublic, user_id: list.user_id }) }}
@@ -936,50 +986,24 @@ const WatchlistPanel = ({ currentUser }) => {
                             <svg className='w-3 h-3' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z' /></svg>
                           </button>
                         )}
-                        <svg className={`w-4 h-4 text-white/20 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} fill='none' stroke='currentColor' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M19 9l-7 7-7-7' /></svg>
+                        <svg className='w-4 h-4 text-white/20' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M9 5l7 7-7 7' /></svg>
                       </div>
                     </button>
-
-                    {isOpen && (
-                      <div className='border-t border-white/[0.04] bg-[#070707] px-4 py-3'>
-                        {loadingItem[list.id]
-                          ? <div className='flex justify-center py-5'><Spinner /></div>
-                          : items.length === 0
-                            ? <p className='text-center text-white/20 text-xs py-4'>Empty list</p>
-                            : <div className='space-y-1.5 max-h-56 overflow-y-auto' style={{ scrollbarWidth: 'thin', scrollbarColor: '#1A1A1A transparent' }}>
-                                {items.map(item => {
-                                  const p = TMDB_IMG(item.poster_path, 'w92')
-                                  return (
-                                    <div key={item.id}
-                                      className={`flex items-center gap-3 px-3 py-2 rounded-xl transition-all duration-200 group/row border ${item.is_completed ? 'bg-[#D4AF37]/3 border-[#D4AF37]/10' : 'border-transparent hover:bg-white/[0.025] hover:border-white/[0.04]'}`}>
-                                      {p ? <img src={p} alt={item.title} className={`w-6 h-9 object-cover rounded flex-shrink-0 transition-all ${item.is_completed ? 'brightness-50' : ''}`} />
-                                         : <div className='w-6 h-9 bg-[#181818] rounded flex-shrink-0' />
-                                      }
-                                      <span className={`flex-1 text-[12px] font-medium truncate transition-colors ${item.is_completed ? 'text-white/40 line-through' : 'text-white/70'}`}>{item.title}</span>
-
-                                      <div className='flex items-center gap-1 flex-shrink-0'>
-                                        {/* Quiz-gated watch toggle */}
-                                        <QuizWatchButton
-                                          item={item}
-                                          userId={currentUser?.id}
-                                          onWatched={handleWatched}
-                                          onUnwatch={handleUnwatch}
-                                        />
-                                        {/* Remove without credit */}
-                                        <RemoveItemBtn item={item} listId={list.id} onRemove={handleRemove} />
-                                      </div>
-                                    </div>
-                                  )
-                                })}
-                              </div>
-                        }
-                      </div>
-                    )}
                   </div>
                 )
               })
         }
       </div>
+
+      {/* Full list detail modal */}
+      {activeList && (
+        <ListModal
+          list={activeList}
+          userId={currentUser?.id}
+          onClose={() => setActiveList(null)}
+          onCountChange={handleCountChange}
+        />
+      )}
 
       {/* Shareable list modal */}
       {shareableList && (
