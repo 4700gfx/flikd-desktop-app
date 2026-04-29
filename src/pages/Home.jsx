@@ -685,7 +685,7 @@ const Home = () => {
       }
       await supabase.from('activities').insert({ user_id: currentUser.id, activity_type: 'list_created', activity_data: { list_id: list.id, list_name: listData.name, movie_count: listData.movies.length } })
       setUserLists(prev => [...prev, { id: list.id, name: list.name, description: list.description, isPublic: list.is_public, itemCount: listData.movies.length, completedCount: 0 }])
-      return { success: true }
+      return { success: true, listId: list.id, listName: list.name }
     } catch (err) {
       return { success: false, error: err.message }
     }
