@@ -297,11 +297,12 @@ const SeasonSection = ({ season, tvItem, watchedEps, userId, onEpisodeToggle, on
 }
 
 /* ─── TV Show Card ─────────────────────────────────── */
-const TVCard = ({ item, index, userId, onTVProgressChange }) => {
-  const [seasons,     setSeasons]     = useState([])
-  const [watchedEps,  setWatchedEps]  = useState(new Set())
-  const [loadingTV,   setLoadingTV]   = useState(true)
-  const [showSeasons, setShowSeasons] = useState(false)
+const TVCard = ({ item, index, userId, isOwner, onTVProgressChange, onRemove }) => {
+  const [seasons,       setSeasons]       = useState([])
+  const [watchedEps,    setWatchedEps]    = useState(new Set())
+  const [loadingTV,     setLoadingTV]     = useState(true)
+  const [showSeasons,   setShowSeasons]   = useState(false)
+  const [confirmRemove, setConfirmRemove] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -416,13 +417,41 @@ const TVCard = ({ item, index, userId, onTVProgressChange }) => {
           </div>
         </div>
 
-        {/* Quiz hint */}
-        {!loadingTV && !full && (
+        {/* Quiz hint + remove button row */}
+        {!loadingTV && (
           <div className='px-5 pb-3 flex flex-wrap items-center gap-1.5'>
-            <QuizBadge type='episode' />
-            <span className='text-[9px] text-white/20'>per episode ·</span>
-            <QuizBadge type='season' />
-            <span className='text-[9px] text-white/20'>full season</span>
+            {!full && <>
+              <QuizBadge type='episode' />
+              <span className='text-[9px] text-white/20'>per episode ·</span>
+              <QuizBadge type='season' />
+              <span className='text-[9px] text-white/20'>full season</span>
+            </>}
+            {isOwner && (
+              <div className='ml-auto'>
+                {confirmRemove ? (
+                  <div className='flex items-center gap-2'>
+                    <p className='text-[10px] text-red-400/70'>Remove without credit?</p>
+                    <button onClick={(e) => { e.stopPropagation(); onRemove?.(item); setConfirmRemove(false) }}
+                      style={{ touchAction: 'manipulation' }}
+                      className='px-2 py-1 rounded-lg bg-red-500/15 border border-red-500/25 text-red-400 text-[9px] font-bold hover:bg-red-500/25 transition-all'>
+                      Remove
+                    </button>
+                    <button onClick={(e) => { e.stopPropagation(); setConfirmRemove(false) }}
+                      style={{ touchAction: 'manipulation' }}
+                      className='px-2 py-1 rounded-lg bg-white/[0.04] border border-white/[0.08] text-white/30 text-[9px] font-bold'>
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button onClick={(e) => { e.stopPropagation(); setConfirmRemove(true) }}
+                    style={{ touchAction: 'manipulation' }}
+                    className='text-[10px] text-white/15 hover:text-red-400/60 transition-colors flex items-center gap-1'>
+                    <svg className='w-3 h-3' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16' /></svg>
+                    Remove from list
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -850,7 +879,7 @@ const ListModal = ({ list, userId, onClose, onCountChange }) => {
                   <div className='space-y-3'>
                     <p className='text-[10px] font-black text-white/20 uppercase tracking-widest'>TV Shows</p>
                     {filtShows.map((show, i) => (
-                      <TVCard key={show.id} item={show} index={i} userId={userId} onTVProgressChange={handleTVProgress} />
+                      <TVCard key={show.id} item={show} index={i} userId={userId} isOwner={isOwner} onTVProgressChange={handleTVProgress} onRemove={handleRemoveItem} />
                     ))}
                   </div>
                 )}

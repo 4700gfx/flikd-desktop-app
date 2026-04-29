@@ -885,29 +885,67 @@ const LibraryRow = ({ item, index }) => {
    PANEL 4 — WATCHLIST (uses ListModal for full detail)
 ───────────────────────────────────────────────────── */
 const WatchlistPanel = ({ currentUser }) => {
-  const [lists, setLists] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [tab, setTab] = useState('active')
-  const [activeList, setActiveList] = useState(null)
-  const [shareableList, setShareableList] = useState(null)
+  const [lists,        setLists]        = useState([])
+  const [sharedLists,  setSharedLists]  = useState([])   // lists invited to by others
+  const [loading,      setLoading]      = useState(true)
+  const [tab,          setTab]          = useState('active')
+  const [activeList,   setActiveList]   = useState(null)  // own list → ListModal
+  const [openShareable, setOpenShareable] = useState(null) // shared-with-me → ShareableList
+  const [shareableList, setShareableList] = useState(null) // own collab → ShareableList
 
   useEffect(() => {
     if (!currentUser?.id) return
-    let live = true; setLoading(true)
-    const normalize = (d) => d.map(l => ({
+    let live = true
+    setLoading(true)
+
+    const normalizeOwn = (d) => d.map(l => ({
       id: l.list_id ?? l.id, name: l.name, description: l.description,
       isPublic: l.is_public, isCollab: l.is_collaborative,
       total: Number(l.item_count ?? l.list_items?.length) || 0,
       done:  Number(l.completed_count ?? l.list_items?.filter(i => i.is_completed).length) || 0,
       user_id: l.user_id ?? currentUser.id,
     }))
-    supabase.rpc('get_user_lists_with_counts', { target_user_id: currentUser.id })
-      .then(({ data, error }) => {
-        if (!live) return
-        if (!error && data) { setLists(normalize(data)); return }
-        return supabase.from('lists').select('*, list_items(id, is_completed)').eq('user_id', currentUser.id).is('deleted_at', null).order('updated_at', { ascending: false })
-          .then(({ data: d }) => { if (live && d) setLists(normalize(d)) })
-      }).catch(() => {}).finally(() => { if (live) setLoading(false) })
+
+    const fetchOwn = () =>
+      supabase.rpc('get_user_lists_with_counts', { target_user_id: currentUser.id })
+        .then(({ data, error }) => {
+          if (!error && data) return normalizeOwn(data)
+          return supabase.from('lists').select('*, list_items(id, is_completed)')
+            .eq('user_id', currentUser.id).is('deleted_at', null).order('updated_at', { ascending: false })
+            .then(({ data: d }) => normalizeOwn(d || []))
+        })
+
+    const fetchShared = async () => {
+      const [{ data: collabRows }, { data: progress }] = await Promise.all([
+        supabase.from('list_collaborators')
+          .select('role, lists!inner(id, name, description, is_public, is_collaborative, user_id, list_items(id, is_completed))')
+          .eq('user_id', currentUser.id)
+          .eq('role', 'viewer'),
+        supabase.from('shared_list_progress')
+          .select('list_id, item_id')
+          .eq('user_id', currentUser.id)
+          .eq('is_completed', true),
+      ])
+      const myDone = {}
+      ;(progress || []).forEach(p => { myDone[p.list_id] = (myDone[p.list_id] || 0) + 1 })
+      return (collabRows || []).map(row => ({
+        id:            row.lists.id,
+        name:          row.lists.name,
+        description:   row.lists.description,
+        isPublic:      row.lists.is_public,
+        isCollab:      true,
+        total:         row.lists.list_items?.length || 0,
+        done:          myDone[row.lists.id] || 0,
+        user_id:       row.lists.user_id,
+        isSharedWithMe: true,
+      }))
+    }
+
+    Promise.all([fetchOwn(), fetchShared()])
+      .then(([own, shared]) => { if (!live) return; setLists(own); setSharedLists(shared) })
+      .catch(() => {})
+      .finally(() => { if (live) setLoading(false) })
+
     return () => { live = false }
   }, [currentUser?.id])
 
@@ -917,15 +955,19 @@ const WatchlistPanel = ({ currentUser }) => {
 
   const active = lists.filter(l => l.done < l.total || l.total === 0)
   const done   = lists.filter(l => l.total > 0 && l.done >= l.total)
-  const shown  = tab === 'active' ? active : done
+  const shown  = tab === 'active' ? active : tab === 'done' ? done : sharedLists
   const totalWatched = lists.reduce((s, l) => s + l.done, 0)
 
   return (
     <div className='h-full flex flex-col'>
+      {/* Stats bar */}
       <div className='px-5 py-3 border-b border-white/[0.04] flex items-center gap-4 sm:gap-6 flex-shrink-0 overflow-x-auto' style={{ scrollbarWidth: 'none' }}>
         {[['Lists', lists.length], ['In Progress', active.length], ['Complete', done.length], ['Watched', totalWatched]].map(([k, v]) => (
           <div key={k} className='flex-shrink-0'><p className='font-bebas text-xl text-[#D4AF37] leading-none tabular-nums'>{v}</p><p className='text-[9px] text-white/25 uppercase tracking-wider'>{k}</p></div>
         ))}
+        {sharedLists.length > 0 && (
+          <div className='flex-shrink-0'><p className='font-bebas text-xl text-purple-400 leading-none tabular-nums'>{sharedLists.length}</p><p className='text-[9px] text-white/25 uppercase tracking-wider'>Shared</p></div>
+        )}
       </div>
 
       {/* AI quiz notice */}
@@ -934,85 +976,128 @@ const WatchlistPanel = ({ currentUser }) => {
         <p className='text-[10px] text-[#D4AF37]/55 font-semibold'>Click a list to view items and verify watches with an AI quiz!</p>
       </div>
 
-      <div className='flex border-b border-white/[0.04] mt-3 flex-shrink-0'>
-        {[['active', 'In Progress', active.length], ['done', 'Completed', done.length]].map(([id, label, count]) => (
+      {/* Tab bar */}
+      <div className='flex border-b border-white/[0.04] mt-3 flex-shrink-0 overflow-x-auto' style={{ scrollbarWidth: 'none' }}>
+        {[
+          ['active', 'In Progress', active.length, false],
+          ['done',   'Completed',   done.length,   false],
+          ['shared', 'Shared',      sharedLists.length, true],
+        ].map(([id, label, count, isPurple]) => (
           <button key={id} onClick={() => setTab(id)} style={{ touchAction: 'manipulation' }}
-            className={`flex-1 py-3 text-[12px] font-bold border-b-2 -mb-px transition-all duration-200 ${tab === id ? 'text-[#D4AF37] border-[#D4AF37]' : 'text-white/30 border-transparent hover:text-white/55'}`}>
+            className={`flex-1 py-3 text-[12px] font-bold border-b-2 -mb-px transition-all duration-200 whitespace-nowrap ${
+              tab === id
+                ? isPurple ? 'text-purple-400 border-purple-400' : 'text-[#D4AF37] border-[#D4AF37]'
+                : 'text-white/30 border-transparent hover:text-white/55'
+            }`}>
             {label} <span className='ml-1 opacity-50'>({count})</span>
           </button>
         ))}
       </div>
 
+      {/* List rows */}
       <div className='flex-1 overflow-y-auto px-5 py-3 space-y-2' style={{ scrollbarWidth: 'thin', scrollbarColor: '#222 transparent' }}>
-        {loading
-          ? <div className='flex justify-center py-20'><Spinner size={32} /></div>
-          : shown.length === 0
-            ? <div className='py-20 text-center'><p className='text-white/20 text-sm'>No {tab === 'active' ? 'active' : 'completed'} lists</p></div>
-            : shown.map((list, i) => {
-                const pct    = list.total ? Math.round((list.done / list.total) * 100) : 0
-                const isFull = pct === 100 && list.total > 0
-                return (
-                  <div key={list.id}
-                    className={`rounded-2xl border overflow-hidden transition-all duration-200 ${isFull ? 'border-[#D4AF37]/20' : 'border-white/[0.05]'}`}
-                    style={{ animation: `navCardReveal .22s ease-out ${i * 0.04}s both` }}>
-                    <button onClick={() => setActiveList(list)} style={{ touchAction: 'manipulation' }}
-                      className='w-full flex items-center gap-3 px-4 py-3.5 hover:bg-white/[0.02] transition-colors text-left'>
-                      <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${isFull ? 'bg-[#D4AF37]/15' : 'bg-[#141414]'}`}>
-                        {isFull
-                          ? <svg className='w-4 h-4 text-[#D4AF37]' fill='currentColor' viewBox='0 0 20 20'><path fillRule='evenodd' clipRule='evenodd' d='M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z' /></svg>
-                          : <svg className='w-4 h-4 text-white/25' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2' /></svg>
-                        }
-                      </div>
-                      <div className='flex-1 min-w-0'>
-                        <div className='flex items-center gap-1.5 mb-1.5'>
-                          <span className='text-[13px] font-bold text-white/80 truncate'>{list.name}</span>
-                          {list.isPublic && <span className='text-[8px] font-black text-blue-400/60 uppercase tracking-wider flex-shrink-0'>pub</span>}
-                          {list.isCollab && <span className='text-[8px] font-black text-purple-400/60 uppercase tracking-wider flex-shrink-0 px-1.5 py-0.5 bg-purple-400/8 border border-purple-400/15 rounded-full'>Shared</span>}
-                          {isFull && <span className='text-[#D4AF37] text-xs ml-auto flex-shrink-0'>✓</span>}
-                        </div>
-                        <div className='flex items-center gap-2'>
-                          <div className='flex-1 h-1.5 bg-[#1A1A1A] rounded-full overflow-hidden'>
-                            <div className={`h-full rounded-full transition-all duration-700 ${isFull ? 'bg-gradient-to-r from-[#D4AF37] to-[#F0C93A]' : 'bg-[#D4AF37]/55'}`} style={{ width: `${pct}%` }} />
-                          </div>
-                          <span className='text-[10px] text-white/25 tabular-nums flex-shrink-0'>{list.done}/{list.total}</span>
-                        </div>
-                      </div>
-                      <div className='flex items-center gap-1.5 flex-shrink-0'>
-                        {list.isCollab && (
-                          <button
-                            onClick={e => { e.stopPropagation(); setShareableList({ id: list.id, name: list.name, description: list.description, is_public: list.isPublic, user_id: list.user_id }) }}
-                            style={{ touchAction: 'manipulation' }}
-                            className='w-7 h-7 rounded-xl bg-purple-400/8 border border-purple-400/15 flex items-center justify-center text-purple-400/50 hover:text-purple-400 hover:bg-purple-400/15 transition-all'>
-                            <svg className='w-3 h-3' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z' /></svg>
-                          </button>
-                        )}
-                        <svg className='w-4 h-4 text-white/20' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M9 5l7 7-7 7' /></svg>
-                      </div>
-                    </button>
+        {loading ? (
+          <div className='flex justify-center py-20'><Spinner size={32} /></div>
+        ) : shown.length === 0 ? (
+          <div className='py-20 text-center'>
+            <p className='text-white/20 text-sm'>
+              {tab === 'active' ? 'No active lists'
+               : tab === 'done' ? 'No completed lists'
+               : 'No lists shared with you yet'}
+            </p>
+            {tab === 'shared' && <p className='text-white/10 text-xs mt-2'>Ask a list owner to invite you by username</p>}
+          </div>
+        ) : shown.map((list, i) => {
+          const pct     = list.total ? Math.round((list.done / list.total) * 100) : 0
+          const isFull  = pct === 100 && list.total > 0
+          const isShared = list.isSharedWithMe
+
+          const handleRowClick = () => {
+            if (isShared) {
+              setOpenShareable({ id: list.id, name: list.name, description: list.description, is_public: list.isPublic, is_collaborative: true, user_id: list.user_id })
+            } else {
+              setActiveList(list)
+            }
+          }
+
+          return (
+            <div key={list.id}
+              className={`rounded-2xl border overflow-hidden transition-all duration-200 ${
+                isFull   ? 'border-[#D4AF37]/20' :
+                isShared ? 'border-purple-400/[0.12]' :
+                           'border-white/[0.05]'
+              }`}
+              style={{ animation: `navCardReveal .22s ease-out ${i * 0.04}s both` }}>
+              <button onClick={handleRowClick} style={{ touchAction: 'manipulation' }}
+                className='w-full flex items-center gap-3 px-4 py-3.5 hover:bg-white/[0.02] transition-colors text-left'>
+
+                {/* Icon */}
+                <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${
+                  isFull   ? 'bg-[#D4AF37]/15' :
+                  isShared ? 'bg-purple-400/10' :
+                             'bg-[#141414]'
+                }`}>
+                  {isFull
+                    ? <svg className='w-4 h-4 text-[#D4AF37]' fill='currentColor' viewBox='0 0 20 20'><path fillRule='evenodd' clipRule='evenodd' d='M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z' /></svg>
+                    : isShared
+                      ? <svg className='w-4 h-4 text-purple-400/60' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z' /></svg>
+                      : <svg className='w-4 h-4 text-white/25' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2' /></svg>
+                  }
+                </div>
+
+                {/* Info */}
+                <div className='flex-1 min-w-0'>
+                  <div className='flex items-center gap-1.5 mb-1.5'>
+                    <span className='text-[13px] font-bold text-white/80 truncate'>{list.name}</span>
+                    {isShared && <span className='text-[8px] font-black text-purple-400/60 uppercase tracking-wider flex-shrink-0 px-1.5 py-0.5 bg-purple-400/8 border border-purple-400/15 rounded-full'>Shared</span>}
+                    {!isShared && list.isPublic && <span className='text-[8px] font-black text-blue-400/60 uppercase tracking-wider flex-shrink-0'>pub</span>}
+                    {!isShared && list.isCollab && <span className='text-[8px] font-black text-purple-400/60 uppercase tracking-wider flex-shrink-0 px-1.5 py-0.5 bg-purple-400/8 border border-purple-400/15 rounded-full'>Collab</span>}
+                    {isFull && <span className='text-[#D4AF37] text-xs ml-auto flex-shrink-0'>✓</span>}
                   </div>
-                )
-              })
-        }
+                  <div className='flex items-center gap-2'>
+                    <div className='flex-1 h-1.5 bg-[#1A1A1A] rounded-full overflow-hidden'>
+                      <div className={`h-full rounded-full transition-all duration-700 ${
+                        isFull   ? 'bg-gradient-to-r from-[#D4AF37] to-[#F0C93A]' :
+                        isShared ? 'bg-purple-400/60' :
+                                   'bg-[#D4AF37]/55'
+                      }`} style={{ width: `${pct}%` }} />
+                    </div>
+                    <span className='text-[10px] text-white/25 tabular-nums flex-shrink-0'>{list.done}/{list.total}</span>
+                  </div>
+                  {isShared && <p className='text-[9px] text-purple-400/40 mt-1'>Your progress · tap to open shared view</p>}
+                </div>
+
+                {/* Actions */}
+                <div className='flex items-center gap-1.5 flex-shrink-0'>
+                  {!isShared && list.isCollab && (
+                    <button
+                      onClick={e => { e.stopPropagation(); setShareableList({ id: list.id, name: list.name, description: list.description, is_public: list.isPublic, user_id: list.user_id }) }}
+                      style={{ touchAction: 'manipulation' }}
+                      className='w-7 h-7 rounded-xl bg-purple-400/8 border border-purple-400/15 flex items-center justify-center text-purple-400/50 hover:text-purple-400 hover:bg-purple-400/15 transition-all'>
+                      <svg className='w-3 h-3' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z' /></svg>
+                    </button>
+                  )}
+                  <svg className='w-4 h-4 text-white/20' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M9 5l7 7-7 7' /></svg>
+                </div>
+              </button>
+            </div>
+          )
+        })}
       </div>
 
-      {/* Full list detail modal */}
+      {/* Own list → ListModal */}
       {activeList && (
-        <ListModal
-          list={activeList}
-          userId={currentUser?.id}
-          onClose={() => setActiveList(null)}
-          onCountChange={handleCountChange}
-        />
+        <ListModal list={activeList} userId={currentUser?.id} onClose={() => setActiveList(null)} onCountChange={handleCountChange} />
       )}
 
-      {/* Shareable list modal */}
+      {/* Shared-with-me → ShareableList (viewer) */}
+      {openShareable && (
+        <ShareableList list={openShareable} currentUser={currentUser} isOwner={false} onClose={() => setOpenShareable(null)} />
+      )}
+
+      {/* Own collab list → ShareableList (owner) */}
       {shareableList && (
-        <ShareableList
-          list={shareableList}
-          currentUser={currentUser}
-          isOwner={shareableList.user_id === currentUser?.id}
-          onClose={() => setShareableList(null)}
-        />
+        <ShareableList list={shareableList} currentUser={currentUser} isOwner={shareableList.user_id === currentUser?.id} onClose={() => setShareableList(null)} />
       )}
     </div>
   )
